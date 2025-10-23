@@ -253,7 +253,7 @@ for g in ["N5", "G5", "PB"]:
 
     update_confidence_trends(merged, g)
     render_summary(merged, g)
-        merged = new
+
     else:
         merged = df_old
 except Exception as e:
