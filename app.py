@@ -227,8 +227,28 @@ def append_merged(game_key, latest_row):
     if not latest_row or "numbers" not in latest_row: return None
     df_old = _read_master(game_key)
     new = pd.DataFrame([latest_row])
-    if df_old is not None and new is not None and not df_old.empty and not new.empty:
-        merged = pd.concat([df_old, new], ignore_index=True).drop_duplicates(subset=["draw_date"], keep="last")
+    if df_old is not None and new is not None and not df_old.empty and not for g in ["N5", "G5", "PB"]:
+    st.subheader(f"Post-draw analysis — {g}")
+    df_old = load_previous_data(g)
+    latest = get_latest_draws(g)
+
+    # safer merge to avoid crashes if dataframes are empty or malformed
+    try:
+        if df_old is not None and latest is not None and not df_old.empty and not latest.empty:
+            merged = pd.concat([df_old, latest], ignore_index=True).drop_duplicates(subset=["draw_date"], keep="last")
+        elif latest is not None and not latest.empty:
+            merged = latest
+        else:
+            merged = df_old
+    except Exception as e:
+        st.warning(f"⚠️ Data merge skipped due to format issue: {e}")
+        if 'df_old' in locals():
+            merged = df_old
+        else:
+            merged = latest
+
+    update_confidence_trends(merged, g)
+    render_summary(merged, g) drop_duplicates(subset=["draw_date"], keep="last")
     elif new is not None and not new.empty:
         merged = new
     else:
@@ -260,7 +280,7 @@ def run_adaptive_mc(game_key, state, latest_numbers, n_trials=3000):
     var = float(state[game_key]["variance_level"])
     rec = float(state[game_key]["recency_weight"])
 
-    pool_max = {"N5":31, "G5":47, "PB":69}[game_key]
+    pool_max = {"N5":34, "G5":47, "PB":69}[game_key]
     take = {"N5":5, "G5":5, "PB":5}[game_key]
     red_ball = (game_key == "PB")
 
