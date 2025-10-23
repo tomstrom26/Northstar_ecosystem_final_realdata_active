@@ -222,11 +222,14 @@ def _save_master(game_key, df: pd.DataFrame):
     df.to_csv(path, index=False)
     if GH_TOKEN:
         gh_write_text(f"data/{game_key}_master.csv", df.to_csv(index=False), f"Update {game_key}_master.csv via app")
-
 def append_merged(game_key, latest_row):
     if not latest_row or "numbers" not in latest_row: return None
     df_old = _read_master(game_key)
-    new = pd.DataFrame([]
+    new = pd.DataFrame([latest_row])
+    merged = pd.concat([df_old, new], ignore_index=True).drop_duplicates(subset=["date","numbers"])
+    _save_master(game_key, merged)
+    return merged
+
 # --- Run post-draw analyses for all games ---
 for g in ["N5", "G5", "PB"]:
     st.subheader(f"Post-draw analysis — {g}")
