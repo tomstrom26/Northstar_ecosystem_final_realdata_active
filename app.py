@@ -251,7 +251,7 @@ for g in ["N5", "G5", "PB"]:
         else:
             merged = pd.DataFrame()
 
-    update_confidence_trends(merged, g)
+   df_old update_confidence_trends(merged, g)
     render_summary(merged, g)
 
     st.warning(f"⚠️ Data merge skipped due to format issue: {e}")
