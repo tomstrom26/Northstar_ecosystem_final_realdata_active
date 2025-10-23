@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-st.caption("Northstar Ecosystem © 2025 • Powered by Streamlit")
 
 st.set_page_config(page_title="Northstar System", layout="wide")
 
@@ -27,11 +26,8 @@ st.subheader("⚙️ Run Northstar Analysis")
 if st.button("▶️ Run Simulation"):
     st.info("Running analysis...")
     # placeholder for your future Northstar logic
-    # (replace this section with your prediction functions)
-    st.success("✅ Analysis complete! Results saved to Drive or displayed below.")
+    st.success("✅ Analysis complete! Results displayed below.")
 
 # --- FOOTER ---
 st.markdown("---")
-st.caption("Northstar Ecosystem © 2025 • P
-st.write(
-    "Let's start building! For help and inspiration, head over to [docs.streamlit.io](https://docs.streamlit.io/)."
+st.caption("Northstar Ecosystem © 2025 • Powered by Streamlit")
