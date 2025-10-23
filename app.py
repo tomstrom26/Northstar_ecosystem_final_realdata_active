@@ -227,7 +227,15 @@ def append_merged(game_key, latest_row):
     if not latest_row or "numbers" not in latest_row: return None
     df_old = _read_master(game_key)
     new = pd.DataFrame([latest_row])
-    merged = pd.concat([df_old, new], ignore_index=True).drop_duplicates(subset=["date","numbers"])
+    if df_old is not None and new is not None and not df_old.empty and not new.empty:
+        merged = pd.concat([df_old, new], ignore_index=True).drop_duplicates(subset=["draw_date"], keep="last")
+    elif new is not None and not new.empty:
+        merged = new
+    else:
+        merged = df_old
+except Exception as e:
+    st.warning(f"⚠️ Data merge skipped due to format issue: {e}")
+    merged = df_old if 'df_old' in locals() else new
     _save_master(game_key, merged)
     return merged
 
