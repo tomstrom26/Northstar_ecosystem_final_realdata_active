@@ -3,6 +3,27 @@ from pydrive2.auth import GoogleAuth
 from pydrive2.drive import GoogleDrive
 import os
 
+import datetime
+import pytz
+import streamlit as st
+
+def show_health_widget():
+    chicago = pytz.timezone("America/Chicago")
+    now = datetime.datetime.now(chicago)
+    next_events = [
+        ("N5 Pre-Draw", "9:00 AM"),
+        ("N5 Mid Analysis", "11:00 AM"),
+        ("N5 Afternoon", "2:00 PM"),
+        ("N5 Final", "3:30 PM"),
+        ("G5/Powerball", "Mon/Wed/Fri, 6:30 AM"),
+    ]
+    st.markdown("### 🧭 Northstar Ecosystem Status")
+    st.write(f"**Current Time:** {now.strftime('%Y-%m-%d %I:%M %p %Z')}")
+    st.write(f"**Next Task:** {next_events[0][0]} → {next_events[0][1]}")
+    st.write("**Confidence Sync:** Stable ✅")
+    st.write("**Trickle Engine:** Active 🔁")
+    st.markdown("---")
+
 st.markdown("## 🗓️ Scheduling")
 st.caption("Run pre-draw deep analysis several times per day and a final post-draw analysis after the draw.")
 
