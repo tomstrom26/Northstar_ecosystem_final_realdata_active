@@ -3,6 +3,30 @@ from pydrive2.auth import GoogleAuth
 from pydrive2.drive import GoogleDrive
 import os
 
+st.markdown("## 🗓️ Scheduling")
+st.caption("Run pre-draw deep analysis several times per day and a final post-draw analysis after the draw.")
+
+colA, colB = st.columns([1,1])
+with colA:
+    if st.button("▶️ Start Scheduler"):
+        start_scheduler()
+with colB:
+    if st.button("⏹️ Stop Scheduler"):
+        stop_scheduler()
+
+# Show configured times
+st.write("**Pre-draw times (local lottery TZ):**", ", ".join(SCHEDULE["pre_draw_times"]))
+st.write("**Post-draw times (local lottery TZ):**", ", ".join(SCHEDULE["post_draw_times"]))
+st.caption(f"Timezone: {LOTTERY_TZ}")
+
+# Live log + last outputs
+st.markdown("### 🧾 Recent job log")
+for line in st.session_state.job_log[-10:]:
+    st.text(line)
+
+st.markdown("### 🧪 Latest results")
+st.json(st.session_state.last_outputs)
+
 # ---- SCHEDULER: Pre/Post draw jobs ----
 import os, json, pytz
 from datetime import datetime
