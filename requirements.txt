@@ -1,1 +1,3 @@
+pydrive2
 streamlit
+pandas
