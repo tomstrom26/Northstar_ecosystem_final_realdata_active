@@ -1,3 +1,5 @@
+st.caption("Northstar Ecosystem © 2025 • Powered by Streamlit")
+
 st.set_page_config(page_title="Northstar System", layout="wide")
 
 # --- HEADER ---
