@@ -254,9 +254,6 @@ for g in ["N5", "G5", "PB"]:
     update_confidence_trends(merged, g)
     render_summary(merged, g)
 
-    else:
-        merged = df_old
-except Exception as e:
     st.warning(f"⚠️ Data merge skipped due to format issue: {e}")
     merged = df_old if 'df_old' in locals() else new
     _save_master(game_key, merged)
