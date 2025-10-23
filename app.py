@@ -227,7 +227,6 @@ def append_merged(game_key, latest_row):
     if not latest_row or "numbers" not in latest_row: return None
     df_old = _read_master(game_key)
     new = pd.DataFrame([latest_row])
-    if df_old is not None and new is not None and not df_old.empty and not  drop_duplicates(subset=["draw_date"], keep="last")
     elif new is not None and not # --- Run post-draw analyses for all games ---
 for g in ["N5", "G5", "PB"]:
     st.subheader(f"Post-draw analysis — {g}")
