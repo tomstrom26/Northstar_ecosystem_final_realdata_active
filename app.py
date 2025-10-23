@@ -277,9 +277,28 @@ st.caption("Adaptive MC + clustering • Trickle-down cross-influence • Live o
 # Sidebar: source URLs + manual actions
 st.sidebar.header("Data sources (official)")
 sources = load_sources()
+# Sidebar: source URLs + manual actions
+st.sidebar.header("Data sources (official)")
+sources = load_sources()
+
+# ✅ Auto-default official URLs if empty
+defaults = {
+    "N5": "https://www.mnlottery.com/winning-numbers?selectedGames[]=16",
+    "G5": "https://www.mnlottery.com/winning-numbers?selectedGames[]=10",
+    "PB": "https://www.mnlottery.com/winning-numbers?selectedGames[]=12",
+}
+for k, v in defaults.items():
+    if not sources.get(k):
+        sources[k] = v
+save_sources(sources)  # persist once
+
 for g in ["N5","G5","PB"]:
     default = sources.get(g,"")
-    sources[g] = st.sidebar.text_input(f"{GAMES[g]['name']} results URL", value=default, placeholder="Paste official results page URL")
+    sources[g] = st.sidebar.text_input(
+        f"{GAMES[g]['name']} results URL", 
+        value=default, 
+        placeholder="Paste official results page URL"
+    )
 if st.sidebar.button("💾 Save sources"):
     save_sources(sources)
     st.sidebar.success("Saved!")
