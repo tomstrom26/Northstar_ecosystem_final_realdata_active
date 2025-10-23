@@ -226,13 +226,13 @@ def _save_master(game_key, df: pd.DataFrame):
 def append_merged(game_key, latest_row):
     if not latest_row or "numbers" not in latest_row: return None
     df_old = _read_master(game_key)
-    new = pd.DataFrame([latest_row])
+    new = pd.DataFrame([
 # --- Run post-draw analyses for all games ---
 for g in ["N5", "G5", "PB"]:
     st.subheader(f"Post-draw analysis — {g}")
 
-    
-
+    df_old = load_previous_data(g)
+    latest = get_latest_draws(g)
 
     # Safer merge to handle empty or malformed data gracefully
     try:
@@ -251,8 +251,9 @@ for g in ["N5", "G5", "PB"]:
         else:
             merged = pd.DataFrame()
 
-   df_old update_confidence_trends(merged, g)
-    render_summary(merged, g)
+    # <<< make sure these two lines are indented exactly 4 spaces from the left
+    update_confidence_trends(merged, g)
+    render_summary(merged, g)        
 
     st.warning(f"⚠️ Data merge skipped due to format issue: {e}")
     merged = df_old if 'df_old' in locals() else new
