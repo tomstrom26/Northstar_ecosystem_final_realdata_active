@@ -1,3 +1,22 @@
+# --- Google Drive Auto-Sync ---
+from pydrive2.auth import GoogleAuth
+from pydrive2.drive import GoogleDrive
+import os
+
+def sync_from_drive(folder_name="Northstar_Data"):
+    gauth = GoogleAuth()
+    gauth.LocalWebserverAuth()
+    drive = GoogleDrive(gauth)
+
+    file_list = drive.ListFile({'q': f"'{folder_name}' in parents and trashed=false"}).GetList()
+
+    os.makedirs("data", exist_ok=True)
+    for file in file_list:
+        if file['title'].endswith(".csv"):
+            file.GetContentFile(os.path.join("data", file['title']))
+            print(f"✅ Synced {file['title']} from Drive")
+    return "data"
+
 import streamlit as st
 import pandas as pd
 
@@ -6,6 +25,14 @@ st.set_page_config(page_title="Northstar System", layout="wide")
 # --- HEADER ---
 st.title("🌟 Northstar — All-in-One System")
 st.caption("Live engine: offline + Drive-ready build")
+
+# Sync new drawings before analysis
+st.info("🔄 Checking Google Drive for latest draws...")
+try:
+    data_path = sync_from_drive()
+    st.success("✅ Latest draw files synced from Drive.")
+except Exception as e:
+    st.warning(f"⚠️ Drive sync skipped: {e}")
 
 # --- FILE UPLOAD ---
 st.subheader("📤 Upload your latest datasets")
