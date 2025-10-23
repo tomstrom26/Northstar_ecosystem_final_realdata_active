@@ -7,4 +7,3 @@ apscheduler
 pytz
 matplotlib
 reportlab
-pydrive2
