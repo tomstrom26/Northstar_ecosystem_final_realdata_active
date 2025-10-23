@@ -1,9 +1,6 @@
-streamlit
 pandas
-numpy
 requests
 beautifulsoup4
-apscheduler
+python-dateutil
 pytz
-matplotlib
-reportlab
+altair
