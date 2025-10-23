@@ -271,6 +271,9 @@ st.set_page_config(page_title="Northstar — Adaptive v3", layout="wide")
 st.title("⭐ Northstar Ecosystem — Adaptive Scheduler v3")
 st.caption("Adaptive MC + clustering • Trickle-down cross-influence • Live official pulls • Scheduled pre/post runs")
 
+
+
+
 # Sidebar: source URLs + manual actions
 st.sidebar.header("Data sources (official)")
 sources = load_sources()
