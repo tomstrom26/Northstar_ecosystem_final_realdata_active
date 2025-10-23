@@ -226,7 +226,7 @@ def _save_master(game_key, df: pd.DataFrame):
 def append_merged(game_key, latest_row):
     if not latest_row or "numbers" not in latest_row: return None
     df_old = _read_master(game_key)
-    new = pd.DataFrame([
+    new = pd.DataFrame([]
 # --- Run post-draw analyses for all games ---
 for g in ["N5", "G5", "PB"]:
     st.subheader(f"Post-draw analysis — {g}")
