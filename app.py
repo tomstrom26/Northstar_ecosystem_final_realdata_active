@@ -274,9 +274,6 @@ st.caption("Adaptive MC + clustering • Trickle-down cross-influence • Live o
 # Sidebar: source URLs + manual actions
 st.sidebar.header("Data sources (official)")
 sources = load_sources()
-"N5": "https://www.mnlottery.com/winning-numbers?selectedGames[]=16"
-"G5": "https://www.mnlottery.com/winning-numbers?selectedGames[]=10"
-"PB": "https://www.mnlottery.com/winning-numbers?selectedGames[]=12"
 
 # ✅ Auto-default official URLs if empty
 defaults = {
@@ -290,6 +287,7 @@ for k, v in defaults.items():
 save_sources(sources)  # persist once
 
 for g in ["N5","G5","PB"]:
+    ...
     default = sources.get(g,"")
     sources[g] = st.sidebar.text_input(
         f"{GAMES[g]['name']} results URL", 
