@@ -257,7 +257,6 @@ for g in ["N5", "G5", "PB"]:
     st.warning(f"⚠️ Data merge skipped due to format issue: {e}")
     merged = df_old if 'df_old' in locals() else new
     _save_master(game_key, merged)
-    return merged
 
 # -----------------------
 # UTIL
