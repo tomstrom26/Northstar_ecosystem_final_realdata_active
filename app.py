@@ -234,7 +234,8 @@ def append_merged(game_key, latest_row):
 for g in ["N5", "G5", "PB"]:
     st.subheader(f"Post-draw analysis — {g}")
 
-    df_ols = latest = get_latest_draws(g)
+    df_old = load_previous_data(g)
+    latest = get_latest_draws(g
 
     # Safer merge to handle empty or malformed data gracefully
     try:
