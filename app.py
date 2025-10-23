@@ -17,6 +17,20 @@ def sync_from_drive(folder_name="Northstar_Data"):
             print(f"✅ Synced {file['title']} from Drive")
     return "data"
 
+# Optional save / append
+def append_to_master(latest_draws, master_csv="master_draws.csv"):
+    df = pd.DataFrame(latest_draws)
+    try:
+        old = pd.read_csv(master_csv)
+        df = pd.concat([old, df]).drop_duplicates(subset=["game", "date"])
+    except FileNotFoundError:
+        pass
+    df.to_csv(master_csv, index=False)
+    return df
+
+# Uncomment to enable automatic updates
+# master_df = append_to_master([d for d in latest_draws if d])
+
 import streamlit as st
 import pandas as pd
 
