@@ -235,7 +235,7 @@ for g in ["N5", "G5", "PB"]:
     st.subheader(f"Post-draw analysis — {g}")
 
     df_old = load_previous_data(g)
-    latest = get_latest_draws(g
+    latest = get_latest_draws(g)
 
     # Safer merge to handle empty or malformed data gracefully
     try:
