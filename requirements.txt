@@ -1,10 +1,9 @@
 streamlit
 pandas
 numpy
-google-auth
-google-auth-oauthlib
-google-auth-httplib2
-google-api-python-client
-altair
+requests
+beautifulsoup4
 apscheduler
 pytz
+matplotlib
+reportlab
