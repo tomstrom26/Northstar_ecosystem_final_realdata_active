@@ -127,53 +127,76 @@ def _cached_pull(url: str) -> str:
 # -----------------------------
 # Robust MN HTML parse
 # -----------------------------
+import os
+import requests
+import pandas as pd
+from bs4 import BeautifulSoup
+import streamlit as st
+
 def pull_official(game):
     """
-    Pull official lottery data for Northstar (N5), Gopher 5 (G5), and Powerball (PB)
-    using MN Open Data + NY Powerball JSON feeds.
+    Pulls Minnesota Lottery results from official pages.
+    Auto-saves merged data history into /data folder.
     """
-    import requests
-    import pandas as pd
-    import streamlit as st
 
-    # --- set up API URLs ---
-    api_urls = {
-        "N5": "https://data.mn.gov/resource/3x3v-hdx5.json?$limit=5000&$order=draw_date%20DESC",
-        "G5": "https://data.mn.gov/resource/bpww-ctz7.json?$limit=5000&$order=draw_date%20DESC",
-        "PB": "https://data.ny.gov/resource/d6yy-54nr.json?$limit=5000&$order=draw_date%20DESC"
+    urls = {
+        "N5": "https://www.mnlottery.com/games/northstar-cash/winning-numbers",
+        "G5": "https://www.mnlottery.com/games/gopher-5/winning-numbers",
+        "PB": "https://www.mnlottery.com/games/powerball/winning-numbers"
     }
 
-    # --- headers with your MN Open Data App Token ---
-    headers = {
-        "User-Agent": "Mozilla/5.0",
-        "X-App-Token": "YOUR_APP_TOKEN_HERE"
-    }
+    if game not in urls:
+        st.error(f"No URL mapping found for {game}.")
+        return None
+
+    # Ensure local /data folder exists
+    folder = "./data"
+    os.makedirs(folder, exist_ok=True)
+    filename = os.path.join(folder, f"{game}_history.csv")
 
     try:
-        r = requests.get(api_urls[game], timeout=30, headers=headers)
+        url = urls[game]
+        resp = requests.get(url, timeout=15)
+        resp.raise_for_status()
+        soup = BeautifulSoup(resp.text, "html.parser")
 
-        if r.status_code != 200:
-            st.warning(f"{game}: feed returned {r.status_code}")
-            return pd.DataFrame(columns=["date", "n1", "n2", "n3", "n4", "n5", "game"])
+        draw_rows = []
+        # MN Lottery's structure: each draw block
+        rows = soup.find_all("div", class_="winning-numbers__game")
+        for block in rows:
+            date_tag = block.find("div", class_="winning-numbers__date")
+            nums_tag = block.find_all("span", class_="ball")
+            if date_tag and nums_tag:
+                date = date_tag.text.strip()
+                nums = [int(n.text.strip()) for n in nums_tag if n.text.strip().isdigit()]
+                if len(nums) >= 5:
+                    draw_rows.append([date] + nums[:5])
 
-        data = r.json()
-        st.write(f"{game}: fetched {len(data)} records")  # temporary debug
+        if not draw_rows:
+            st.warning(f"{game}: Could not parse any draw rows from official page.")
+            return None
 
-        # --- basic JSON parse for MN / NY feeds ---
-        records = []
-        for row in data:
-            numbers = row.get("winning_numbers", "").replace(",", " ").split()
-            if len(numbers) >= 5:
-                date = row.get("draw_date", "Unknown")
-                records.append([date] + numbers[:5] + [game])
+        new_df = pd.DataFrame(draw_rows, columns=["date", "n1", "n2", "n3", "n4", "n5"])
+        new_df["game"] = game
 
-        df = pd.DataFrame(records, columns=["date", "n1", "n2", "n3", "n4", "n5", "game"])
-        return df
+        # Load existing history if available
+        if os.path.exists(filename):
+            old_df = pd.read_csv(filename)
+            merged = pd.concat([old_df, new_df]).drop_duplicates(subset=["date"], keep="last").sort_values("date")
+        else:
+            merged = new_df
+
+        merged.to_csv(filename, index=False)
+        st.success(f"{game}: ✅ Pulled {len(new_df)} draws and updated local history ({len(merged)} total).")
+
+        return merged
 
     except Exception as e:
         st.error(f"{game} fetch failed: {e}")
-        return pd.DataFrame(columns=["date", "n1", "n2", "n3", "n4", "n5", "game"])
-                   
+        if os.path.exists(filename):
+            st.warning(f"{game}: Using previously saved history file instead.")
+            return pd.read_csv(filename)
+        return None
         # --- fallback: existing HTML parser if API unavailable ---
         html = _cached_pull(url)
         soup = BeautifulSoup(html, "html.parser")
