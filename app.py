@@ -135,33 +135,42 @@ import streamlit as st
 
 def pull_official(game):
     """
-    Pulls Minnesota Lottery results using prioritized sources:
+    Pulls Minnesota Lottery results using:
     1. GitHub JSON mirror
     2. Jina proxy relay
     3. Local cached CSV
     """
 
     # GitHub data source mapping
-github_urls = {
-    "N5": "https://raw.githubusercontent.com/tomstrom26/Minnesota-Lottery-Data-mnlottery-json/main/northstar_cash.json",
-    "G5": "https://raw.githubusercontent.com/tomstrom26/Minnesota-Lottery-Data-mnlottery-json/main/gopher_5.json",
-    "PB": "https://raw.githubusercontent.com/tomstrom26/Minnesota-Lottery-Data-mnlottery-json/main/powerball.json"
-}
-    
-    
+    github_urls = {
+        "N5": "https://raw.githubusercontent.com/tomstrom26/Minnesota-Lottery-Data-mnlottery-json/main/northstar_cash.json",
+        "G5": "https://raw.githubusercontent.com/tomstrom26/Minnesota-Lottery-Data-mnlottery-json/main/gopher_5.json",
+        "PB": "https://raw.githubusercontent.com/tomstrom26/Minnesota-Lottery-Data-mnlottery-json/main/powerball.json"
+    }
 
     # Proxy fallback sources (Jina relay)
-proxy_urls = {
-    "N5": "https://r.jina.ai/https://raw.githubusercontent.com/tomstrom26/Minnesota-Lottery-Data-mnlottery-json/main/northstar_cash.json",
-    "G5": "https://r.jina.ai/https://raw.githubusercontent.com/tomstrom26/Minnesota-Lottery-Data-mnlottery-json/main/gopher_5.json",
-    "PB": "https://r.jina.ai/https://raw.githubusercontent.com/tomstrom26/Minnesota-Lottery-Data-mnlottery-json/main/powerball.json"
-}
-    
+    proxy_urls = {
+        "N5": "https://r.jina.ai/https://raw.githubusercontent.com/tomstrom26/Minnesota-Lottery-Data-mnlottery-json/main/northstar_cash.json",
+        "G5": "https://r.jina.ai/https://raw.githubusercontent.com/tomstrom26/Minnesota-Lottery-Data-mnlottery-json/main/gopher_5.json",
+        "PB": "https://r.jina.ai/https://raw.githubusercontent.com/tomstrom26/Minnesota-Lottery-Data-mnlottery-json/main/powerball.json"
+    }
+
     # Check for missing mapping
     if game not in github_urls:
         error(f"No source mapping found for {game}")
         return None
 
+    folder = "./data"
+    os.makedirs(folder, exist_ok=True)
+    filename = os.path.join(folder, f"{game}_history.json")
+
+    def fetch_json(url):
+        try:
+            r = requests.get(url, timeout=10)
+            r.raise_for_status()
+            return r.json()
+        except Exception as e:
+            return None
     folder = "./data"
     os.makedirs(folder, exist_ok=True)
     filename = os.path.join(folder, f"{game}_history.json")
