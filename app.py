@@ -146,93 +146,122 @@ def fetch_json(url):
 # --------------------------------------------------------------------
 def pull_official(game):
     """
-    Pulls MN Lottery results from GitHub (primary) or proxy (backup),
-    then normalizes and persists to ./data/{game}_history.csv
+    Pulls MN Lottery results from GitHub or proxy,
+    then normalizes and persists to ./data/ for offline use.
     """
+
     github_urls = {
-        "N5": "https://raw.githubusercontent.com/Minnesota-Lottery/history/main/northstar_cash.json",
-        "G5": "https://raw.githubusercontent.com/Minnesota-Lottery/history/main/gopher5.json",
-        "PB": "https://raw.githubusercontent.com/Minnesota-Lottery/history/main/powerball.json"
+        "N5": "https://raw.githubusercontent.com/yourusername/yourrepo/main/data/n5.json",
+        "G5": "https://raw.githubusercontent.com/yourusername/yourrepo/main/data/g5.json",
+        "PB": "https://raw.githubusercontent.com/yourusername/yourrepo/main/data/pb.json"
     }
 
     proxy_urls = {
-        "N5": "https://r.jina.ai/https://raw.githubusercontent.com/Minnesota-Lottery/history/main/northstar_cash.json",
-        "G5": "https://r.jina.ai/https://raw.githubusercontent.com/Minnesota-Lottery/history/main/gopher5.json",
-        "PB": "https://r.jina.ai/https://raw.githubusercontent.com/Minnesota-Lottery/history/main/powerball.json"
+        "N5": "https://r.jina.ai/https://raw.githubusercontent.com/yourusername/yourrepo/main/data/n5.json",
+        "G5": "https://r.jina.ai/https://raw.githubusercontent.com/yourusername/yourrepo/main/data/g5.json",
+        "PB": "https://r.jina.ai/https://raw.githubusercontent.com/yourusername/yourrepo/main/data/pb.json"
     }
-
-    if game not in github_urls:
-        st.error(f"{game}: No source mapping found.")
-        return pd.DataFrame()
 
     folder = "./data"
     os.makedirs(folder, exist_ok=True)
-    filename = os.path.join(folder, f"{game}_history.csv")
+    filename = os.path.join(folder, f"{game.lower()}.csv")
 
-    # Try GitHub, then proxy
-    data = fetch_json(github_urls[game])
+    # Step 1 — Try GitHub
+    data = fetch_json(github_urls.get(game, ""))
     if data is None:
         st.info(f"{game}: Retrying via proxy...")
-        data = fetch_json(proxy_urls[game])
+        data = fetch_json(proxy_urls.get(game, ""))
 
-    # If a raw list comes back, wrap it
+    # Step 2 — Normalize JSON data
     if isinstance(data, list):
         data = {"draws": data}
 
-    # Fallback to local if both fail
-    if data is None:
+    # Step 3 — If all online sources fail, use cached/local CSV
+    if data is None or not data.get("draws"):
         st.error(f"{game}: ❌ All remote sources failed.")
         if os.path.exists(filename):
             st.warning(f"{game}: Using cached local file.")
             try:
-                return pd.read_csv(filename)
-            except Exception:
-                return pd.DataFrame(columns=["date", "numbers"])
-        return pd.DataFrame(columns=["date", "numbers"])
+                df = pd.read_csv(filename)
+                st.info(f"{game}: Loaded local file with {len(df)} rows.")
+                return df
+            except Exception as e:
+                st.error(f"{game}: Failed to read cached file — {e}")
+                return pd.DataFrame()
+        else:
+            st.error(f"{game}: No local file found — cannot continue.")
+            return pd.DataFrame()
 
-    # Normalize + save + return
+    # Step 4 — Save and return normalized data
     df = normalize_and_save_draws(game, data, filename)
-    return df if df is not None else pd.DataFrame(columns=["date", "numbers"])
-
+    if df is not None and not df.empty:
+        st.success(f"{game}: ✅ Pulled and saved {len(df)} draws.")
+        return df
+    else:
+        st.warning(f"{game}: no new data available — using fallback file.")
+        if os.path.exists(filename):
+            try:
+                df = pd.read_csv(filename)
+                st.info(f"{game}: Loaded previous data ({len(df)} rows).")
+                return df
+            except Exception as e:
+                st.error(f"{game}: Failed to load fallback file — {e}")
+        return pd.DataFrame()
+# --------------------------------------------------------------------
+# Normalize + Save Draws Function
+# --------------------------------------------------------------------
 def normalize_and_save_draws(game, data, filename):
+    """
+    Converts JSON data into a normalized DataFrame,
+    merges with any existing CSV, and saves the result.
+    """
+
     try:
-        # Normalize JSON into rows
+        # Ensure structure
+        items = data.get("draws", data if isinstance(data, list) else [])
         draw_rows = []
-        items = data.get("draws", data)
+
         for draw in items:
-            draw_date = draw.get("draw_date")
-            numbers = draw.get("numbers") or draw.get("winning_numbers")
+            draw_date = draw.get("draw_date") or draw.get("date")
+            numbers = draw.get("numbers") or draw.get("drawn_numbers")
+
             if draw_date and numbers:
                 if isinstance(numbers, list):
                     numbers = ",".join(map(str, numbers))
-                draw_rows.append({"date": draw_date, "numbers": numbers})
+                draw_rows.append({
+                    "date": draw_date,
+                    "numbers": numbers
+                })
 
+        # If no valid draws found
         if not draw_rows:
-            st.warning(f"{game}: No valid data found in JSON.")
+            st.warning(f"{game}: No valid draw rows found in data.")
             return None
 
-        # ✅ Build new DataFrame and merge/save
+        # Build DataFrame
         df_new = pd.DataFrame(draw_rows)
         df_new["game"] = game
 
+        # Ensure /data folder exists
         os.makedirs(os.path.dirname(filename), exist_ok=True)
 
+        # Merge with any existing data
         if os.path.exists(filename):
-            old_df = pd.read_csv(filename)
-            merged = pd.concat([old_df, df_new], ignore_index=True)
+            try:
+                old_df = pd.read_csv(filename)
+                merged = pd.concat([old_df, df_new]).drop_duplicates().reset_index(drop=True)
+            except Exception:
+                merged = df_new
         else:
             merged = df_new
 
+        # Save merged data
         merged.to_csv(filename, index=False)
-        st.success(f"{game}: ✅ Pulled & saved successfully.")
+        st.success(f"{game}: ✅ Saved {len(merged)} total rows to {filename}")
         return merged
 
     except Exception as e:
-        # ✅ Safety check and debug printout
-        os.makedirs(os.path.dirname(filename), exist_ok=True)
-        st.error(f"{game}: Failed to build or save data: {e}")
-        st.warning(f"{game}: Check if data format or URL changed.")
-        st.write("DEBUG — Incoming data sample:", data)
+        st.error(f"{game}: Failed to normalize or save — {e}")
         return None
         
         df_new = pd.DataFrame(draw_rows)
