@@ -185,7 +185,7 @@ def fetch_json(url):
     except Exception as e:
         return None
 
-def load_history(game, filename, proxy_urls)
+def load_history(game, filename, proxy_urls):
     data = fetch_json(proxy_urls[game])
 
     # 🧩 Normalize JSON structure (fix list-type returns)
