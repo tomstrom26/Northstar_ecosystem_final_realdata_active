@@ -134,18 +134,18 @@ import pandas as pd
 import streamlit as st
 
 
-    # Try GitHub, then proxy
-    data = fetch_json(github_urls[game])
-    if data is None:
+     # Try GitHub, then proxy
+     data = fetch_json(github_urls[game])
+     if data is None:
         st.info(f"{game}: Retrying via Jina proxy…")
         data = fetch_json(proxy_urls[game])
 
-    # If a raw list comes back, wrap it
-    if isinstance(data, list):
+     # If a raw list comes back, wrap it
+     if isinstance(data, list):
         data = {"draws": data}
 
-    # Fallback to local file if both remotes fail
-    if data is None:
+     # Fallback to local file if both remotes fail
+     if data is None:
         st.error(f"{game}: ❌ All remote sources failed.")
         if os.path.exists(filename):
             st.warning(f"{game}: Using cached local file.")
