@@ -25,6 +25,7 @@ import streamlit as st
 # -----------------------------
 # Config / paths
 # -----------------------------
+
 APP_VER = "4.0"
 TZ = pytz.timezone("America/Chicago")
 ROOT = Path(".")
@@ -55,6 +56,7 @@ SCHEDULE = {
 # -----------------------------
 # GitHub persistence (optional)
 # -----------------------------
+
 GH = st.secrets.get("github", {})
 GH_TOKEN = GH.get("token","")
 GH_OWNER = GH.get("owner","")
@@ -91,6 +93,7 @@ def base64_encode(s: str) -> str:
 # -----------------------------
 # Utilities
 # -----------------------------
+
 def now_ct():
     return datetime.now(TZ)
 
@@ -118,6 +121,7 @@ def save_manifest(m:dict):
 # -----------------------------
 # Cache: 30-minute pull cache
 # -----------------------------
+
 @st.cache_data(ttl=1800, show_spinner=False)
 def _cached_pull(url: str) -> str:
     r = requests.get(url, timeout=20, headers={"User-Agent":"Mozilla/5.0 (Northstar)"})
@@ -134,18 +138,18 @@ import pandas as pd
 import streamlit as st
 
 
-     # Try GitHub, then proxy
-     data = fetch_json(github_urls[game])
-     if data is None:
+    # Try GitHub, then proxy
+    data = fetch_json(github_urls[game])
+    if data is None:
         st.info(f"{game}: Retrying via Jina proxy…")
         data = fetch_json(proxy_urls[game])
 
-     # If a raw list comes back, wrap it
-     if isinstance(data, list):
+    # If a raw list comes back, wrap it
+    if isinstance(data, list):
         data = {"draws": data}
 
-     # Fallback to local file if both remotes fail
-     if data is None:
+    # Fallback to local file if both remotes fail
+    if data is None:
         st.error(f"{game}: ❌ All remote sources failed.")
         if os.path.exists(filename):
             st.warning(f"{game}: Using cached local file.")
@@ -162,6 +166,7 @@ import streamlit as st
 # --------------------------------------------------------------------
 # Fetch JSON helper
 # --------------------------------------------------------------------
+
 def fetch_json(url):
     try:
         r = requests.get(url, timeout=10)
@@ -174,6 +179,7 @@ def fetch_json(url):
 # --------------------------------------------------------------------
 # Pull official MN data (GitHub → proxy → local fallback)
 # --------------------------------------------------------------------
+
 def pull_official(game):
     """
     Pulls MN Lottery results from GitHub (primary) or Jina proxy (backup),
@@ -289,6 +295,7 @@ def normalize_and_save_draws(game, data, filename):
 # -----------------------------
 # Persistence: histories / logs
 # -----------------------------
+
 def save_history(game:str, df_new:pd.DataFrame) -> pd.DataFrame:
     p = HIST_PATH(game)
     if p.exists():
@@ -344,7 +351,8 @@ def score_performance(game:str, predicted:List[int], actual:List[int]):
 # -----------------------------
 # Weekly archive + manifest
 # -----------------------------
-def weekly_archive_if_needed():
+
+    def weekly_archive_if_needed():
     # Make a zip each Sunday ~16:00 CST
     now = now_ct()
     if now.weekday()==6 and 16 <= now.hour < 17:  # Sunday hour window
@@ -369,6 +377,7 @@ def update_manifest(synced=False):
 # -----------------------------
 # Trickle-down seed
 # -----------------------------
+
 def build_trickle_seed(n5_hist:pd.DataFrame, window:int=20) -> Dict[int,float]:
     if n5_hist is None or n5_hist.empty:
         return {}
@@ -385,7 +394,8 @@ def build_trickle_seed(n5_hist:pd.DataFrame, window:int=20) -> Dict[int,float]:
 # -----------------------------
 # Adaptive simulation (with dynamic trickle weighting)
 # -----------------------------
-def adaptive_simulation(df:pd.DataFrame, game:str, trickle:Dict[int,float]|None=None) -> (List[int], float):
+
+    def adaptive_simulation(df:pd.DataFrame, game:str, trickle:Dict[int,float]|None=None) -> (List[int], float):
     if df is None or df.empty: return [], 0.0
     cols=["n1","n2","n3","n4","n5"]
     recent = df.head(40).copy()
@@ -445,6 +455,7 @@ def adaptive_simulation(df:pd.DataFrame, game:str, trickle:Dict[int,float]|None=
 # -----------------------------
 # Schedule tick (safe, idempotent)
 # -----------------------------
+
 def within_window(hhmm:str, slack_min:int=2) -> bool:
     hh,mm = map(int, hhmm.split(":"))
     now = now_ct()
@@ -480,6 +491,7 @@ def scheduler_tick(auto:bool=True):
 # -----------------------------
 # Single phase run (+ trickle)
 # -----------------------------
+
 def run_phase(game:str, phase:str):
     st.info(f"Running **{phase}** for **{game}** …")
     # Pull + save history
@@ -512,6 +524,7 @@ def run_phase(game:str, phase:str):
 # -----------------------------
 # UI
 # -----------------------------
+
 st.set_page_config(page_title=f"Northstar v{APP_VER}", page_icon="🌟", layout="wide")
 st.title(f"🌟 Northstar Ecosystem — v{APP_VER}")
 st.caption("Live official pulls • Auto storage • Trickle-down influence • Confidence & performance logging • CST schedules")
