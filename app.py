@@ -21,7 +21,7 @@ SOURCES_JSON = DATA_DIR / "sources.json"
 CACHE_TTL_SECONDS = 15 * 60  # re-pull at most every 15 minutes
 
 GAMES = {
-    "N5": {"name": "North 5", "count": 5, "pool": 52},
+    "N5": {"name": "North 5", "count": 5, "pool": 34},
     "G5": {"name": "Gopher 5", "count": 5, "pool": 47},
     "PB": {"name": "Powerball", "count": 5, "pool": 69, "bonus_name": "PB", "bonus_pool": 26},
 }
@@ -107,9 +107,41 @@ def pull_official_table(url:str)->pd.DataFrame:
     Returns DataFrame with columns:
       date, n1..n5, bonus (optional), source_url
     """
-    headers = {"User-Agent":"Mozilla/5.0 (Northstar Ecosystem bot)"}
-    html = requests.get(url, headers=headers, timeout=20).text
-    soup = BeautifulSoup(html, "html.parser")
+    import re
+import pandas as pd
+import requests
+from bs4 import BeautifulSoup
+
+def fetch_draws(url, game_key):
+    """
+    Pulls MN Lottery winning numbers from official pages (HTML + embedded JSON fallback)
+    """
+    try:
+        r = requests.get(url, timeout=10)
+        r.raise_for_status()
+        html = r.text
+
+        # 1️⃣ Try to parse JSON data embedded in the script tags (MN Lottery now renders via Vue)
+        json_match = re.search(r'window\.__INITIAL_STATE__\s*=\s*(\{.*?\})\s*;</script>', html)
+        if json_match:
+            data = json_match.group(1)
+            df = pd.read_json(data)
+            return df
+
+        # 2️⃣ If not found, fallback to extracting visible draw rows
+        soup = BeautifulSoup(html, "html.parser")
+        rows = soup.select("div.winning-number, li.winning-number, .number")
+        if rows:
+            nums = [re.findall(r"\d+", r.get_text()) for r in rows]
+            df = pd.DataFrame(nums)
+            return df
+
+        # 3️⃣ If all fails
+        return pd.DataFrame()
+
+    except Exception as e:
+        print(f"Error fetching {game_key}: {e}")
+        return pd.DataFrame()
 
     rows=[]
     # 1) Try explicit <table>
