@@ -247,7 +247,9 @@ def normalize_and_save_draws(game, data, filename):
         st.error(f"{game}: Failed to build or save data: {e}")
         st.warning(f"{game}: Check if data format or URL changed.")
         st.write("DEBUG — Incoming data sample:", data)
+        
         return None
+        
         df_new = pd.DataFrame(draw_rows)
         df_new["game"] = game
 
