@@ -454,37 +454,30 @@ with st.expander("Controls", expanded=True):
 for g in GAMES:
     st.subheader(f"Running phase for {g}...")
 
-    # Step 1: pull official or fallback data
+    # Step 1: Pull official or fallback data
     df_new = pull_official(g)
     if df_new is None or df_new.empty:
         st.warning(f"{g}: no new data available — using fallback file.")
         df_new = load_previous_data(g)
 
-    # Step 2: store or merge history
+    # Step 2: Store or merge history
     hist = save_history(g, df_new)
     if hist is None or hist.empty:
         st.error(f"{g}: failed to build or save history file.")
         continue
 
-    # Step 3: establish trickle-down seed for N5/G5 (cross-pull logic)
+    # Step 3: Establish trickle-down seed for N5/G5 (cross-pull logic)
     trickle = build_trickle_seed(hist) if g in ["N5", "G5"] else None
 
-    # Step 4: run adaptive Monte Carlo + clustering
+    # Step 4: Run adaptive Monte Carlo + clustering
     pick, conf = adaptive_scheduler(hist, trickle)
 
-    # Step 5: update confidence tracking and logs
+    # Step 5: Update confidence tracking and logs
     if pick is not None:
         update_confidence_trends(hist, g)
         st.success(f"{g}: ✅ Updated confidence trends — {conf:.1f}% confidence.")
     else:
         st.warning(f"{g}: No viable pick returned from adaptive scheduler.")
-    if not hist.empty:
-                    latest = hist.iloc[0]
-                    actual = [int(latest[f"n{k}"]) for k in range(1, 6)]
-                    score_performance(g, pick, actual)
-                st.success(f"{g}: {pick}  |  {conf}% confidence")
-            else:
-                st.warning(f"{g}: insufficient data.")
 
         weekly_archive_if_needed()
         update_manifest(synced=bool(GH_TOKEN))
