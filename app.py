@@ -185,22 +185,23 @@ def fetch_json(url):
     except Exception as e:
         return None
 
-data = fetch_json(proxy_urls[game])
+def load_history(game, filename, proxy_urls)
+    data = fetch_json(proxy_urls[game])
 
-# 🧩 Normalize JSON structure (fix list-type returns)
-if isinstance(data, list):
-    data = {"draws": data}
+    # 🧩 Normalize JSON structure (fix list-type returns)
+    if isinstance(data, list):
+        data = {"draws": data}
 
-if data is None:
-    st.error(f"{game}: ❌ All remote sources failed.")
-    if os.path.exists(filename):
-        st.warning(f"{game}: Using cached local file.")
-        with open(filename, "r") as f:
-            return json.load(f)
+    if data is None:
+        st.error(f"{game}: ❌ All remote sources failed.")
+        if os.path.exists(filename):
+            st.warning(f"{game}: Using cached local file.")
+            with open(filename, "r") as f:
+                return json.load(f)
     return None
 
-st.warning(f"{game}: Using new data structure")
-return pd.read_csv(filename)
+    st.warning(f"{game}: Using new data structure")
+    return pd.read_csv(filename)
 
 # --------------------------------------------------------------------
 # Normalize, merge, and save draw history
