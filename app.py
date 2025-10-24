@@ -135,36 +135,36 @@ import streamlit as st
 
 def pull_official(game):
     """
-    Pulls Minnesota Lottery results using resilient triple fallback:
+    Pulls Minnesota Lottery results using prioritized sources:
     1. GitHub JSON mirror
     2. Jina proxy relay
     3. Local cached CSV
     """
-    # GitHub data source mapping
-github_urls = {
-    "N5": "https://raw.githubusercontent.com/Minnesota-Lottery-Data/mnlottery-json/main/northstar_cash.json",
-    "G5": "https://raw.githubusercontent.com/Minnesota-Lottery-Data/mnlottery-json/main/gopher_5.json",
-    "PB": "https://raw.githubusercontent.com/Minnesota-Lottery-Data/mnlottery-json/main/powerball.json"
-}
 
-# Check for missing mapping
-if game not in github_urls:
-    error(f"No source mapping found for {game}")
-    return None
+    # GitHub data source mapping
+    github_urls = {
+        "N5": "https://raw.githubusercontent.com/Minnesota-Lottery-Data/mnlottery-json/main/northstar_cash.json",
+        "G5": "https://raw.githubusercontent.com/Minnesota-Lottery-Data/mnlottery-json/main/gopher_5.json",
+        "PB": "https://raw.githubusercontent.com/Minnesota-Lottery-Data/mnlottery-json/main/powerball.json"
+    }
+
+    # Check for missing mapping
+    if game not in github_urls:
+        error(f"No source mapping found for {game}")
+        return None
 
     folder = "./data"
     os.makedirs(folder, exist_ok=True)
-    filename = os.path.join(folder, f"{game}_history.csv")
+    filename = os.path.join(folder, f"{game}_history.json")
 
     def fetch_json(url):
         try:
-            r = requests.get(url, timeout=20)
+            r = requests.get(url, timeout=10)
             r.raise_for_status()
             return r.json()
         except Exception as e:
-            st.warning(f"{game}: fetch failed for {url.split('?')[0]} — {e}")
             return None
-
+            
     # Try GitHub first
     data = fetch_json(github_urls[game])
     if data is None:
