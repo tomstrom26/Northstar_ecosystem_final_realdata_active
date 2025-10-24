@@ -170,21 +170,25 @@ def fetch_json(url):
     except Exception as e:
         return None
 
+
+# --------------------------------------------------------------------
+# Pull official MN data (GitHub → proxy → local fallback)
+# --------------------------------------------------------------------
 def pull_official(game):
     """
-    Pulls MN Lottery results from GitHub (primary) with a Jina proxy fallback,
-    then normalizes and persists to ./data/{GAME}_history.csv.
-    Returns a DataFrame with columns: date, n1..n5, game
+    Pulls MN Lottery results from GitHub (primary) or Jina proxy (backup),
+    then normalizes and saves them to ./data/{game}_history.csv
     """
     github_urls = {
-        "N5": "https://raw.githubusercontent.com/tomstrom26/Minnesota-Lottery-Data-mnlottery-json/main/northstar_cash.json",
-        "G5": "https://raw.githubusercontent.com/tomstrom26/Minnesota-Lottery-Data-mnlottery-json/main/gopher_5.json",
-        "PB": "https://raw.githubusercontent.com/tomstrom26/Minnesota-Lottery-Data-mnlottery-json/main/powerball.json",
+        "N5": "https://raw.githubusercontent.com/Minnesota-Lottery/history/main/northstar_cash.json",
+        "G5": "https://raw.githubusercontent.com/Minnesota-Lottery/history/main/gopher5.json",
+        "PB": "https://raw.githubusercontent.com/Minnesota-Lottery/history/main/powerball.json"
     }
+
     proxy_urls = {
-        "N5": "https://r.jina.ai/https://raw.githubusercontent.com/tomstrom26/Minnesota-Lottery-Data-mnlottery-json/main/northstar_cash.json",
-        "G5": "https://r.jina.ai/https://raw.githubusercontent.com/tomstrom26/Minnesota-Lottery-Data-mnlottery-json/main/gopher_5.json",
-        "PB": "https://r.jina.ai/https://raw.githubusercontent.com/tomstrom26/Minnesota-Lottery-Data-mnlottery-json/main/powerball.json",
+        "N5": "https://r.jina.ai/https://raw.githubusercontent.com/Minnesota-Lottery/history/main/northstar_cash.json",
+        "G5": "https://r.jina.ai/https://raw.githubusercontent.com/Minnesota-Lottery/history/main/gopher5.json",
+        "PB": "https://r.jina.ai/https://raw.githubusercontent.com/Minnesota-Lottery/history/main/powerball.json"
     }
 
     if game not in github_urls:
@@ -195,10 +199,30 @@ def pull_official(game):
     os.makedirs(folder, exist_ok=True)
     filename = os.path.join(folder, f"{game}_history.csv")
 
+    # Try GitHub, then proxy
+    data = fetch_json(github_urls[game])
+    if data is None:
+        st.info(f"{game}: Retrying via proxy...")
+        data = fetch_json(proxy_urls[game])
 
-# --------------------------------------------------------------------
-# Normalize, merge, and save draw history
-# --------------------------------------------------------------------
+    # If a raw list comes back, wrap it
+    if isinstance(data, list):
+        data = {"draws": data}
+
+    # Fallback to local if both fail
+    if data is None:
+        st.error(f"{game}: ❌ All remote sources failed.")
+        if os.path.exists(filename):
+            st.warning(f"{game}: Using cached local file.")
+            try:
+                return pd.read_csv(filename)
+            except Exception:
+                return pd.DataFrame(columns=["date", "numbers"])
+        return pd.DataFrame(columns=["date", "numbers"])
+
+    # Normalize + save + return
+    df = normalize_and_save_draws(game, data, filename)
+    return df if df is not None else pd.DataFrame(columns=["date", "numbers"])
 
 def normalize_and_save_draws(game, data, filename):
     try:
