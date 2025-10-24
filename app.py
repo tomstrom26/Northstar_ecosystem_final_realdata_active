@@ -175,15 +175,13 @@ def fetch_json(url):
     except Exception as e:
         return None
 
-
 # --------------------------------------------------------------------
 # Pull official MN data (GitHub → proxy → local fallback)
 # --------------------------------------------------------------------
-
 def pull_official(game):
     """
-    Pulls MN Lottery results from GitHub (primary) or Jina proxy (backup),
-    then normalizes and saves them to ./data/{game}_history.csv
+    Pulls MN Lottery results from GitHub (primary) or proxy (backup),
+    then normalizes and persists to ./data/{game}_history.csv
     """
     github_urls = {
         "N5": "https://raw.githubusercontent.com/Minnesota-Lottery/history/main/northstar_cash.json",
