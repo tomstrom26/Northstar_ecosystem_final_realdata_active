@@ -13,6 +13,103 @@ from bs4 import BeautifulSoup
 
 import streamlit as st
 
+
+import re
+import requests
+import pandas as pd
+from bs4 import BeautifulSoup
+
+# ==========================================================
+# 🎯 Minnesota Lottery Official Sources (Auto Prefill)
+# ==========================================================
+MN_SOURCES = {
+    "N5": "https://www.mnlottery.com/games/draw-games/northstar-cash",
+    "G5": "https://www.mnlottery.com/games/draw-games/gopher-5",
+    "PB": "https://www.mnlottery.com/games/draw-games/powerball"
+}
+
+# ==========================================================
+# 🧩 Unified Fetch Function (MN Lottery + JSON fallback)
+# ==========================================================
+def fetch_draws(url, game_key):
+    """
+    Pulls and parses draw data from the MN Lottery site.
+    Falls back to JSON endpoints if HTML format changes.
+    """
+    try:
+        resp = requests.get(url, timeout=20, headers={"User-Agent": "Mozilla/5.0"})
+        resp.raise_for_status()
+
+        # Try JSON API first if present
+        if resp.headers.get("Content-Type", "").startswith("application/json"):
+            data = resp.json()
+            if isinstance(data, list):
+                df = pd.DataFrame(data)
+            elif isinstance(data, dict) and "draws" in data:
+                df = pd.DataFrame(data["draws"])
+            else:
+                df = pd.DataFrame()
+        else:
+            # HTML fallback parse
+            soup = BeautifulSoup(resp.text, "html.parser")
+            draw_rows = soup.find_all("li", class_=re.compile("winning-numbers__item|draw-result|draw-date"))
+            draws = []
+
+            for row in draw_rows:
+                text = re.sub(r"\s+", " ", row.get_text(strip=True))
+                nums = re.findall(r"\d+", text)
+                if len(nums) >= 5:
+                    date_match = re.search(r"(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},\s+\d{4}", text)
+                    date = date_match.group(0) if date_match else "Unknown"
+                    draws.append({
+                        "date": date,
+                        "n1": int(nums[0]),
+                        "n2": int(nums[1]),
+                        "n3": int(nums[2]),
+                        "n4": int(nums[3]),
+                        "n5": int(nums[4]),
+                        "game": game_key
+                    })
+
+            df = pd.DataFrame(draws)
+
+        if df.empty:
+            raise ValueError(f"No draw rows parsed for {game_key}")
+
+        # Clean and sort
+        if "date" in df.columns:
+            df["date"] = pd.to_datetime(df["date"], errors="coerce")
+            df = df.dropna(subset=["date"]).sort_values("date", ascending=False).reset_index(drop=True)
+
+        return df
+
+    except Exception as e:
+        print(f"⚠️ Error fetching {game_key}: {e}")
+        return pd.DataFrame(columns=["date", "n1", "n2", "n3", "n4", "n5", "game"])
+
+# ==========================================================
+# 🧠 Automated Update Cycle (integrates sources)
+# ==========================================================
+def run_all_draw_updates():
+    combined = {}
+    for g in ["N5", "G5", "PB"]:
+        url = MN_SOURCES.get(g)
+        df = fetch_draws(url, g)
+        combined[g] = df
+    return combined
+
+# ==========================================================
+# 🪄 Integrate into Streamlit Display
+# ==========================================================
+def display_latest_draws():
+    st.header("🎯 Live latest draws")
+    results = run_all_draw_updates()
+    for g, df in results.items():
+        if not df.empty:
+            latest = df.iloc[0]
+            st.success(f"{g}: {latest['n1']} {latest['n2']} {latest['n3']} {latest['n4']} {latest['n5']} ({latest['date'].strftime('%b %d, %Y')})")
+        else:
+            st.warning(f"{g}: fallback (no file yet)")
 # -----------------------------
 # Paths & persistence
 # -----------------------------
@@ -107,89 +204,7 @@ def pull_official_table(url:str)->pd.DataFrame:
     Returns DataFrame with columns:
       date, n1..n5, bonus (optional), source_url
     """
-    import re
-import pandas as pd
-import requests
-from bs4 import BeautifulSoup
-
-import re
-import pandas as pd
-import requests
-from bs4 import BeautifulSoup
-
-def fetch_draws(url, game_key):
-    """
-    Pulls MN Lottery winning numbers from official pages (HTML + embedded JSON fallback)
-    and normalizes into a consistent DataFrame: [date, n1, n2, n3, n4, n5, bonus?]
-    """
-    try:
-        r = requests.get(url, timeout=10)
-        r.raise_for_status()
-        html = r.text
-        soup = BeautifulSoup(html, "html.parser")
-
-        # Attempt to find draw date blocks and numbers
-        draw_blocks = soup.find_all("div", class_=re.compile("winning-numbers"))
-        if not draw_blocks:
-            draw_blocks = soup.find_all("li", class_=re.compile("draw-result"))
-
-        data = []
-        for block in draw_blocks:
-            text = block.get_text(" ", strip=True)
-            # Try to extract date and 5–6 numbers from each block
-            nums = re.findall(r"\b\d+\b", text)
-            date_match = re.search(r"([A-Za-z]+\s\d{1,2},\s\d{4})", text)
-            if len(nums) >= 5:
-                date = date_match.group(1) if date_match else "unknown"
-                data.append([date] + nums[:6])
-
-        if not data:
-            print(f"{game_key}: no valid draw rows found")
-            return pd.DataFrame(columns=["date", "n1", "n2", "n3", "n4", "n5", "bonus"])
-
-        df = pd.DataFrame(data, columns=["date", "n1", "n2", "n3", "n4", "n5", "bonus"])
-        df["game"] = game_key
-        return df
-
-    except Exception as e:
-        print(f"Error fetching {game_key}: {e}")
-        return pd.DataFrame(columns=["date", "n1", "n2", "n3", "n4", "n5", "bonus"])
-
-    # 2) If table failed, try list items with date and numbers
-    if not rows:
-        for li in soup.find_all(["li","article","div"]):
-            txt = li.get_text(" ", strip=True)
-            # look for a date
-            try:
-                d = dtparse(txt, fuzzy=True).date()
-            except Exception:
-                continue
-            nums = parse_ints(txt.split())
-            if len(nums)>=5:
-                row={"date":d.isoformat()}
-                for i in range(5): row[f"n{i+1}"]=nums[i]
-                if len(nums)>=6: row["bonus"]=nums[5]
-                rows.append(row)
-
-    if not rows:
-        raise RuntimeError("Could not parse any draw rows from official page.")
-
-    df = pd.DataFrame(rows).drop_duplicates(subset=["date"]).sort_values("date")
-    df["source_url"]=url
-    return df.reset_index(drop=True)
-
-def upsert_historical(game:str, df_new:pd.DataFrame)->pd.DataFrame:
-    """Upsert new rows into {game}_historical.csv"""
-    p = csv_path(game)
-    if p.exists():
-        old = pd.read_csv(p)
-    else:
-        old = pd.DataFrame()
-    all_df = pd.concat([old, df_new], ignore_index=True)
-    all_df = all_df.drop_duplicates(subset=["date"]).sort_values("date")
-    all_df.to_csv(p, index=False)
-    return all_df
-
+   
 # -----------------------------
 # Analysis (Adaptive MC + Trickle)
 # -----------------------------
