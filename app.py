@@ -206,42 +206,45 @@ def load_history(game, filename, proxy_urls):
 # --------------------------------------------------------------------
 # Normalize, merge, and save draw history
 # --------------------------------------------------------------------
-try:
-    # Normalize JSON into rows
-    draw_rows = []
-    items = data.get("draws", data)
-    for draw in items:
-        draw_date = draw.get("draw_date") or draw.get("date")
-        numbers = draw.get("numbers") or draw.get("winning_numbers")
+
+def normalize_and_save_draws(game, data, filename):
+    try:
+        # Normalize JSON into rows
+        draw_rows = []
+        items = data.get("draws", data)
+        for draw in items:
+            draw_date = draw.get("draw_date") or draw.get("date")
+            numbers = draw.get("numbers") or draw.get("winning_numbers")
+       
         if draw_date and numbers:
             if isinstance(numbers, list):
                 numbers = ",".join(map(str, numbers))
             draw_rows.append({"date": draw_date, "numbers": numbers})
 
-    if not draw_rows:
-        st.warning(f"{game}: No valid data found in JSON.")
-        return None
+        if not draw_rows:
+            st.warning(f"{game}: No valid data found in JSON.")
+            return None
    
-    df_new = pd.DataFrame(draw_rows)
-    df_new["game"] = game
+        df_new = pd.DataFrame(draw_rows)
+        df_new["game"] = game
 
-    # Ensure /data directory exists before saving
-    os.makedirs(os.path.dirname(filename), exist_ok=True)
+        # Ensure /data directory exists before saving
+        os.makedirs(os.path.dirname(filename), exist_ok=True)
 
-    # Merge with any previous file
-    if os.path.exists(filename):
-        old_df = pd.read_csv(filename)
-        merged = pd.concat([old_df, df_new]).drop_duplicates(subset=["date"], keep="last")
-    else:
-        merged = df_new
+        # Merge with any previous file
+        if os.path.exists(filename):
+            old_df = pd.read_csv(filename)
+            merged = pd.concat([old_df, df_new]).drop_duplicates(subset=["date"], keep="last")
+        else:
+            merged = df_new
 
-    merged.to_csv(filename, index=False)
-    st.success(f"{game}: ✅ Pulled & saved {len(df_new)} draws successfully.")
-    return merged
+        merged.to_csv(filename, index=False)
+        st.success(f"{game}: ✅ Pulled & saved {len(df_new)} draws successfully.")
+        return merged
 
-except Exception as e:
-    st.error(f"{game}: Failed to build or save history file. {e}")
-    return None
+    except Exception as e:
+        st.error(f"{game}: Failed to build or save history file. {e}")
+        return None
     
 # -----------------------------
 # Persistence: histories / logs
