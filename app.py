@@ -450,7 +450,29 @@ with st.expander("Controls", expanded=True):
         _cached_pull.clear()  # force fresh data
         st.info("Running full Northstar update… please wait ⏳")
         seed = build_trickle_seed(load_history("N5"), window=20)
+def load_previous_data(game):
+    """
+    Loads the most recent stored data file for the specified game (N5, G5, PB).
+    Falls back to an empty DataFrame if no file is found.
+    """
+    import os
+    import pandas as pd
+    import streamlit as st
 
+    folder = "./data"
+    filename = f"{folder}/{game}_history.csv"
+
+    try:
+        if os.path.exists(filename):
+            df = pd.read_csv(filename)
+            st.info(f"{game}: Loaded previous data ({len(df)} rows).")
+            return df
+        else:
+            st.warning(f"{game}: No previous file found — using empty DataFrame.")
+            return pd.DataFrame(columns=["date", "n1", "n2", "n3", "n4", "n5", "game"])
+    except Exception as e:
+        st.error(f"{game}: Error loading previous data: {e}")
+        return pd.DataFrame(columns=["date", "n1", "n2", "n3", "n4", "n5", "game"])
 for g in GAMES:
     st.subheader(f"Running phase for {g}...")
 
