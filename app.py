@@ -174,66 +174,83 @@ def pull_official(game):
     folder = "./data"
     os.makedirs(folder, exist_ok=True)
     filename = os.path.join(folder, f"{game}_history.json")
-
-    def fetch_json(url):
-        try:
-            r = requests.get(url, timeout=10)
-            r.raise_for_status()
-            return r.json()
-        except Exception as e:
-            return None
-            
-    # Try GitHub first
-    data = fetch_json(github_urls[game])
-    if data is None:
-        st.info(f"{game}: Retrying via Jina proxy…")
-        data = fetch_json(proxy_urls[game])
-
-    if data is None:
-        st.error(f"{game}: ❌ All remote sources failed.")
-        if os.path.exists(filename):
-            st.warning(f"{game}: Using last saved history file.")
-            return pd.read_csv(filename)
-        return None
-
+# --------------------------------------------------------------------
+# Fetch JSON helper
+# --------------------------------------------------------------------
+def fetch_json(url):
     try:
-        # Normalize JSON
-        draw_rows = []
-        items = data.get("items", data if isinstance(data, list) else [])
-        for draw in items:
-            draw_date = draw.get("draw_date") or draw.get("date")
-            numbers = draw.get("winning_numbers") or draw.get("numbers")
-            if not draw_date or not numbers:
-                continue
-            nums = [int(n) for n in str(numbers).replace(" ", "").split(",") if n.isdigit()]
-            if len(nums) >= 5:
-                draw_rows.append([draw_date] + nums[:5])
-
-        if not draw_rows:
-            st.warning(f"{game}: No valid draw data parsed.")
-            return None
-
-        df_new = pd.DataFrame(draw_rows, columns=["date", "n1", "n2", "n3", "n4", "n5"])
-        df_new["game"] = game
-
-        # Merge and save
-        if os.path.exists(filename):
-            old_df = pd.read_csv(filename)
-            merged = pd.concat([old_df, df_new]).drop_duplicates(subset=["date"], keep="last").sort_values("date")
-        else:
-            merged = df_new
-
-        merged.to_csv(filename, index=False)
-        st.success(f"{game}: ✅ Pulled {len(df_new)} new draws, merged to {len(merged)} total.")
-        return merged
-
+        r = requests.get(url, timeout=10)
+        r.raise_for_status()
+        return r.json()
     except Exception as e:
-        st.error(f"{game}: JSON parse or merge error — {e}")
-        if os.path.exists(filename):
-            st.warning(f"{game}: Using last saved data.")
-            return pd.read_csv(filename)
         return None
 
+
+# --------------------------------------------------------------------
+# Pull from GitHub or proxy + normalize JSON
+# --------------------------------------------------------------------
+# Try GitHub first
+data = fetch_json(github_urls[game])
+if data is None:
+    st.info(f"{game}: Retrying via Jina proxy…")
+    data = fetch_json(proxy_urls[game])
+
+# Normalize JSON structure (fixes “list object has no attribute 'get'”)
+if isinstance(data, list):
+    data = {"draws": data}
+
+if data is None:
+    st.error(f"{game}: ❌ All remote sources failed.")
+    if os.path.exists(filename):
+        st.warning(f"{game}: Using cached local file.")
+        with open(filename, "r") as f:
+            return json.load(f)
+    return None
+
+st.warning(f"{game}: Using new data structure.")
+return pd.read_csv(filename)  # keep if needed for older fallback behavior
+
+
+# --------------------------------------------------------------------
+# Normalize, merge, and save draw history
+# --------------------------------------------------------------------
+try:
+    # Normalize JSON into rows
+    draw_rows = []
+    items = data.get("draws", data)
+    for draw in items:
+        draw_date = draw.get("draw_date") or draw.get("date")
+        numbers = draw.get("numbers") or draw.get("winning_numbers")
+        if draw_date and numbers:
+            if isinstance(numbers, list):
+                numbers = ",".join(map(str, numbers))
+            draw_rows.append({"date": draw_date, "numbers": numbers})
+
+    if not draw_rows:
+        st.warning(f"{game}: No valid draw rows found in JSON.")
+        return None
+
+    df_new = pd.DataFrame(draw_rows)
+    df_new["game"] = game
+
+    # Ensure /data directory exists before saving
+    os.makedirs(os.path.dirname(filename), exist_ok=True)
+
+    # Merge with any previous file
+    if os.path.exists(filename):
+        old_df = pd.read_csv(filename)
+        merged = pd.concat([old_df, df_new]).drop_duplicates(subset=["date"], keep="last")
+    else:
+        merged = df_new
+
+    merged.to_csv(filename, index=False)
+    st.success(f"{game}: ✅ Pulled & saved {len(df_new)} draws successfully.")
+    return merged
+
+except Exception as e:
+    st.error(f"{game}: Failed to build or save history file. {e}")
+    return None
+    
 # -----------------------------
 # Persistence: histories / logs
 # -----------------------------
