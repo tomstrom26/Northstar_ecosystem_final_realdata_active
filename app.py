@@ -115,33 +115,40 @@ from bs4 import BeautifulSoup
 def fetch_draws(url, game_key):
     """
     Pulls MN Lottery winning numbers from official pages (HTML + embedded JSON fallback)
+    and normalizes into a consistent DataFrame: [date, n1, n2, n3, n4, n5, bonus?]
     """
     try:
         r = requests.get(url, timeout=10)
         r.raise_for_status()
         html = r.text
-
-        # 1️⃣ Try to parse JSON data embedded in the script tags (MN Lottery now renders via Vue)
-        json_match = re.search(r'window\.__INITIAL_STATE__\s*=\s*(\{.*?\})\s*;</script>', html)
-        if json_match:
-            data = json_match.group(1)
-            df = pd.read_json(data)
-            return df
-
-        # 2️⃣ If not found, fallback to extracting visible draw rows
         soup = BeautifulSoup(html, "html.parser")
-        rows = soup.select("div.winning-number, li.winning-number, .number")
-        if rows:
-            nums = [re.findall(r"\d+", r.get_text()) for r in rows]
-            df = pd.DataFrame(nums)
-            return df
 
-        # 3️⃣ If all fails
-        return pd.DataFrame()
+        # Attempt to find draw date blocks and numbers
+        draw_blocks = soup.find_all("div", class_=re.compile("winning-numbers"))
+        if not draw_blocks:
+            draw_blocks = soup.find_all("li", class_=re.compile("draw-result"))
+
+        data = []
+        for block in draw_blocks:
+            text = block.get_text(" ", strip=True)
+            # Try to extract date and 5–6 numbers from each block
+            nums = re.findall(r"\b\d+\b", text)
+            date_match = re.search(r"([A-Za-z]+\s\d{1,2},\s\d{4})", text)
+            if len(nums) >= 5:
+                date = date_match.group(1) if date_match else "unknown"
+                data.append([date] + nums[:6])
+
+        if not data:
+            print(f"{game_key}: no valid draw rows found")
+            return pd.DataFrame(columns=["date", "n1", "n2", "n3", "n4", "n5", "bonus"])
+
+        df = pd.DataFrame(data, columns=["date", "n1", "n2", "n3", "n4", "n5", "bonus"])
+        df["game"] = game_key
+        return df
 
     except Exception as e:
         print(f"Error fetching {game_key}: {e}")
-        return pd.DataFrame()
+        return pd.DataFrame(columns=["date", "n1", "n2", "n3", "n4", "n5", "bonus"])
 
     rows=[]
     # 1) Try explicit <table>
