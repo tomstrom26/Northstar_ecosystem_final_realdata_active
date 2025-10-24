@@ -1,20 +1,18 @@
-name: Wake Ping Northstar App
+name: Wake Northstar
 
 on:
   schedule:
-    # wake 5 minutes before each analysis/draw
-    - cron: '25 11 * * *'   # 6:25 AM CT (11:25 UTC)
-    - cron: '55 14 * * *'   # 9:55 AM CT (14:55 UTC)
-    - cron: '55 16 * * *'   # 11:55 AM CT (16:55 UTC)
-    - cron: '55 19 * * *'   # 2:55 PM CT (19:55 UTC)
-    - cron: '25 21 * * *'   # 3:25 PM CT (21:25 UTC)
-  workflow_dispatch:  # allow manual run
+    - cron: '20 11 * * *'   # 6:20 AM CT
+    - cron: '55 13 * * *'   # 8:55 AM CT
+    - cron: '55 15 * * *'   # 10:55 AM CT
+    - cron: '55 18 * * *'   # 1:55 PM CT
+    - cron: '20 21 * * *'   # 3:20 PM CT
+  workflow_dispatch:
 
 jobs:
   ping:
     runs-on: ubuntu-latest
     steps:
-      - name: Ping Streamlit app
+      - name: Hit Streamlit app
         run: |
-          echo "🚀 Keeping Streamlit app awake..."
-          curl -fsS -m 20 https://northstar-ecosystem-final-realdata-active-tomstrom26.streamlit.app || echo "Ping failed but continuing"
+          curl -fsS -m 20 https://YOUR-STREAMLIT-SUBDOMAIN.streamlit.app || true
