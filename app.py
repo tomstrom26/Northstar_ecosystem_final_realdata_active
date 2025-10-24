@@ -142,20 +142,20 @@ def pull_official(game):
     """
 
     # GitHub data source mapping
-    github_urls = {
+github_urls = {
     "N5": "https://raw.githubusercontent.com/tomstrom26/Minnesota-Lottery-Data-mnlottery-json/main/northstar_cash.json",
     "G5": "https://raw.githubusercontent.com/tomstrom26/Minnesota-Lottery-Data-mnlottery-json/main/gopher_5.json",
     "PB": "https://raw.githubusercontent.com/tomstrom26/Minnesota-Lottery-Data-mnlottery-json/main/powerball.json"
-    }
+}
     
-    }
+    
 
     # Proxy fallback sources (Jina relay)
-    proxy_urls = {
+proxy_urls = {
     "N5": "https://r.jina.ai/https://raw.githubusercontent.com/tomstrom26/Minnesota-Lottery-Data-mnlottery-json/main/northstar_cash.json",
     "G5": "https://r.jina.ai/https://raw.githubusercontent.com/tomstrom26/Minnesota-Lottery-Data-mnlottery-json/main/gopher_5.json",
     "PB": "https://r.jina.ai/https://raw.githubusercontent.com/tomstrom26/Minnesota-Lottery-Data-mnlottery-json/main/powerball.json"
-    }
+}
     
     # Check for missing mapping
     if game not in github_urls:
