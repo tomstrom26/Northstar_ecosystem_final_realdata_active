@@ -135,21 +135,20 @@ import streamlit as st
 
 def pull_official(game):
     """
-    Pulls Minnesota Lottery results from official pages.
-    Auto-saves merged data history into /data folder.
+    Pulls Minnesota Lottery results from official game pages (mnlottery.com).
+    Automatically saves data and merges into historical CSVs.
     """
 
     urls = {
-        "N5": "https://www.mnlottery.com/games/northstar-cash/winning-numbers",
-        "G5": "https://www.mnlottery.com/games/gopher-5/winning-numbers",
-        "PB": "https://www.mnlottery.com/games/powerball/winning-numbers"
+        "N5": "https://www.mnlottery.com/games/northstar-cash",
+        "G5": "https://www.mnlottery.com/games/gopher-5",
+        "PB": "https://www.mnlottery.com/games/powerball"
     }
 
     if game not in urls:
         st.error(f"No URL mapping found for {game}.")
         return None
 
-    # Ensure local /data folder exists
     folder = "./data"
     os.makedirs(folder, exist_ok=True)
     filename = os.path.join(folder, f"{game}_history.csv")
@@ -161,9 +160,10 @@ def pull_official(game):
         soup = BeautifulSoup(resp.text, "html.parser")
 
         draw_rows = []
-        # MN Lottery's structure: each draw block
-        rows = soup.find_all("div", class_="winning-numbers__game")
-        for block in rows:
+        # MN Lottery pages contain results within divs labeled 'winning-numbers' or similar
+        results_section = soup.find_all("div", class_="winning-numbers__result")
+
+        for block in results_section:
             date_tag = block.find("div", class_="winning-numbers__date")
             nums_tag = block.find_all("span", class_="ball")
             if date_tag and nums_tag:
@@ -173,13 +173,13 @@ def pull_official(game):
                     draw_rows.append([date] + nums[:5])
 
         if not draw_rows:
-            st.warning(f"{game}: Could not parse any draw rows from official page.")
+            st.warning(f"{game}: No draws could be parsed from the official MN Lottery page.")
             return None
 
         new_df = pd.DataFrame(draw_rows, columns=["date", "n1", "n2", "n3", "n4", "n5"])
         new_df["game"] = game
 
-        # Load existing history if available
+        # Load and merge existing data
         if os.path.exists(filename):
             old_df = pd.read_csv(filename)
             merged = pd.concat([old_df, new_df]).drop_duplicates(subset=["date"], keep="last").sort_values("date")
@@ -187,14 +187,13 @@ def pull_official(game):
             merged = new_df
 
         merged.to_csv(filename, index=False)
-        st.success(f"{game}: ✅ Pulled {len(new_df)} draws and updated local history ({len(merged)} total).")
-
+        st.success(f"{game}: ✅ Pulled {len(new_df)} draws, merged to {len(merged)} total.")
         return merged
 
     except Exception as e:
         st.error(f"{game} fetch failed: {e}")
         if os.path.exists(filename):
-            st.warning(f"{game}: Using previously saved history file instead.")
+            st.warning(f"{game}: Using last saved history.")
             return pd.read_csv(filename)
         return None
         # --- fallback: existing HTML parser if API unavailable ---
