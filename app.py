@@ -154,7 +154,7 @@ urls = {
     "PB": "https://raw.githubusercontent.com/Minnesota-Lottery-Data/mnlottery-json/main/powerball.json"
 }
 
-    if game not in github_urls:
+ if game not in github_urls:
         st.error(f"No source mapping found for {game}.")
         return None
 
