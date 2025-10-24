@@ -112,6 +112,11 @@ import pandas as pd
 import requests
 from bs4 import BeautifulSoup
 
+import re
+import pandas as pd
+import requests
+from bs4 import BeautifulSoup
+
 def fetch_draws(url, game_key):
     """
     Pulls MN Lottery winning numbers from official pages (HTML + embedded JSON fallback)
@@ -149,27 +154,6 @@ def fetch_draws(url, game_key):
     except Exception as e:
         print(f"Error fetching {game_key}: {e}")
         return pd.DataFrame(columns=["date", "n1", "n2", "n3", "n4", "n5", "bonus"])
-
-    rows=[]
-    # 1) Try explicit <table>
-    for tbl in soup.find_all("table"):
-        for tr in tbl.find_all("tr"):
-            tds = [td.get_text(" ", strip=True) for td in tr.find_all(["td","th"])]
-            if len(tds) < 2: 
-                continue
-            # crude heuristic: first cell likely date, rest contain numbers
-            try:
-                d = dtparse(tds[0], dayfirst=False, fuzzy=True)
-                nums = parse_ints(tds[1:])
-                if len(nums)>=5:
-                    row = {"date": d.date().isoformat()}
-                    for i in range(5):
-                        row[f"n{i+1}"]= nums[i]
-                    if len(nums)>=6:
-                        row["bonus"] = nums[5]
-                    rows.append(row)
-            except Exception:
-                continue
 
     # 2) If table failed, try list items with date and numbers
     if not rows:
