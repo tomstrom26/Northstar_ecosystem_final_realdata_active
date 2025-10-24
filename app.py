@@ -135,12 +135,12 @@ import streamlit as st
 
 def pull_official(game):
     """
-    Pulls Minnesota Lottery results from official game pages (mnlottery.com).
-    Automatically saves data and merges into historical CSVs.
+    Pulls Minnesota Lottery results from official MN Lottery game pages.
+    Auto-saves and merges historical draw data.
     """
 
     urls = {
-        "N5": "https://www.mnlottery.com/games/northstar-cash",
+        "N5": "https://www.mnlottery.com/games/northstar-cash-winning-numbers",
         "G5": "https://www.mnlottery.com/games/gopher-5",
         "PB": "https://www.mnlottery.com/games/powerball"
     }
@@ -160,12 +160,18 @@ def pull_official(game):
         soup = BeautifulSoup(resp.text, "html.parser")
 
         draw_rows = []
-        # MN Lottery pages contain results within divs labeled 'winning-numbers' or similar
+
+        # Attempt primary HTML pattern
         results_section = soup.find_all("div", class_="winning-numbers__result")
 
+        # Fallback pattern if the site changes layout
+        if not results_section:
+            results_section = soup.find_all("div", class_="numbers-list__result")
+
         for block in results_section:
-            date_tag = block.find("div", class_="winning-numbers__date")
-            nums_tag = block.find_all("span", class_="ball")
+            date_tag = block.find("div", class_="winning-numbers__date") or block.find("div", class_="numbers-list__date")
+            nums_tag = block.find_all("span", class_="ball") or block.find_all("li", class_="numbers-list__number")
+
             if date_tag and nums_tag:
                 date = date_tag.text.strip()
                 nums = [int(n.text.strip()) for n in nums_tag if n.text.strip().isdigit()]
@@ -173,13 +179,12 @@ def pull_official(game):
                     draw_rows.append([date] + nums[:5])
 
         if not draw_rows:
-            st.warning(f"{game}: No draws could be parsed from the official MN Lottery page.")
+            st.warning(f"{game}: No draw results parsed from MN Lottery page.")
             return None
 
         new_df = pd.DataFrame(draw_rows, columns=["date", "n1", "n2", "n3", "n4", "n5"])
         new_df["game"] = game
 
-        # Load and merge existing data
         if os.path.exists(filename):
             old_df = pd.read_csv(filename)
             merged = pd.concat([old_df, new_df]).drop_duplicates(subset=["date"], keep="last").sort_values("date")
@@ -196,37 +201,6 @@ def pull_official(game):
             st.warning(f"{game}: Using last saved history.")
             return pd.read_csv(filename)
         return None
-        # --- fallback: existing HTML parser if API unavailable ---
-        html = _cached_pull(url)
-        soup = BeautifulSoup(html, "html.parser")
-        blocks = soup.select("li, article, div")
-        rows = []
-        for b in blocks:
-            txt = " ".join(b.get_text(" ", strip=True).split())
-            dm = re.search(r"(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},\s+\d{4}", txt)
-            nums = re.findall(r"\b\d+\b", txt)
-            if dm and len(nums) >= 5:
-                d = pd.to_datetime(dm.group(0), errors="coerce")
-                if pd.isna(d):
-                    continue
-                row = {"date": d}
-                for i in range(5):
-                    row[f"n{i+1}"] = int(nums[i])
-                row["game"] = game
-                rows.append(row)
-
-        df = pd.DataFrame(rows)
-        if not df.empty:
-            df = (
-                df.drop_duplicates(subset=["date", "n1", "n2", "n3", "n4", "n5"])
-                  .sort_values("date", ascending=False)
-            )
-        return df
-
-    except Exception as e:
-        log_line(f"pull_official error {game}: {e}")
-        return pd.DataFrame(columns=["date", "n1", "n2", "n3", "n4", "n5", "game"])
-# -----------------------------
 # Persistence: histories / logs
 # -----------------------------
 def save_history(game:str, df_new:pd.DataFrame) -> pd.DataFrame:
