@@ -213,18 +213,41 @@ def normalize_and_save_draws(game, data, filename):
         draw_rows = []
         items = data.get("draws", data)
         for draw in items:
-            draw_date = draw.get("draw_date") or draw.get("date")
+            draw_date = draw.get("draw_date")
             numbers = draw.get("numbers") or draw.get("winning_numbers")
-       
-        if draw_date and numbers:
-            if isinstance(numbers, list):
-                numbers = ",".join(map(str, numbers))
-            draw_rows.append({"date": draw_date, "numbers": numbers})
+
+            if draw_date and numbers:
+                if isinstance(numbers, list):
+                    numbers = ",".join(map(str, numbers))
+                draw_rows.append({"date": draw_date, "numbers": numbers})
 
         if not draw_rows:
             st.warning(f"{game}: No valid data found in JSON.")
             return None
-   
+
+        # ✅ Build new DataFrame and merge/save
+        df_new = pd.DataFrame(draw_rows)
+        df_new["game"] = game
+
+        os.makedirs(os.path.dirname(filename), exist_ok=True)
+
+        if os.path.exists(filename):
+            old_df = pd.read_csv(filename)
+            merged = pd.concat([old_df, df_new], ignore_index=True)
+        else:
+            merged = df_new
+
+        merged.to_csv(filename, index=False)
+        st.success(f"{game}: ✅ Pulled & saved successfully.")
+        return merged
+
+    except Exception as e:
+        # ✅ Safety check and debug printout
+        os.makedirs(os.path.dirname(filename), exist_ok=True)
+        st.error(f"{game}: Failed to build or save data: {e}")
+        st.warning(f"{game}: Check if data format or URL changed.")
+        st.write("DEBUG — Incoming data sample:", data)
+        return None
         df_new = pd.DataFrame(draw_rows)
         df_new["game"] = game
 
