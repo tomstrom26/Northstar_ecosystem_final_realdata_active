@@ -452,7 +452,7 @@ with st.expander("Controls", expanded=True):
         seed = build_trickle_seed(load_history("N5"), window=20)
 
         for g in GAMES:
-            hist = save_history(g, df_new) if not df_new.empty else load_history(g)
+            df_new = hist = save_history(g, df_new) if not df_new.empty else load_history(g)
             trickle = seed if g in ("G5", "PB") else None
             pick, conf = adaptive_simulation(hist, g, trickle)
             if pick:
