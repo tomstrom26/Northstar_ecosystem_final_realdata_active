@@ -15,4 +15,4 @@ jobs:
     steps:
       - name: Hit Streamlit app
         run: |
-          curl -fsS -m 20 https://YOUR-STREAMLIT-SUBDOMAIN.streamlit.app || true
+          curl -fsS -m 20 https://northstar-ecosystem-final-realdata-active-tomstrom26.streamlit.app || true
