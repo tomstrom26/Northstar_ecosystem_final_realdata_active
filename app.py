@@ -171,8 +171,29 @@ def pull_official(game: str, url: str) -> pd.DataFrame:
                         df.dropna(subset=["date"])
                           .drop_duplicates(subset=["date", "n1", "n2", "n3", "n4", "n5"])
                           .sort_values("date", ascending=False)
-                    )
-                    return df
+                    # --- set up API URL and headers for full pull ---
+api_urls = {
+    "N5": "https://data.mn.gov/resource/3x3v-hdx5.json?$limit=5000&$order=draw_date%20DESC",
+    "G5": "https://data.mn.gov/resource/bpww-ctz7.json?$limit=5000&$order=draw_date%20DESC",
+    "PB": "https://data.ny.gov/resource/d6yy-54nr.json?$limit=5000&$order=draw_date%20DESC"
+}
+
+headers = {
+    "User-Agent": "Mozilla/5.0",
+    # 👇 paste your real token between the quotes
+    "X-App-Token": "YOUR_APP_TOKEN_HERE"
+}
+
+r = requests.get(api_urls[game], timeout=30, headers=headers)
+
+# quick status + data size check
+if r.status_code != 200:
+    log_line(f"{game} feed returned {r.status_code}")
+    return pd.DataFrame(columns=["date", "n1", "n2", "n3", "n4", "n5", "game"])
+
+data = r.json()
+st.write(f"{game}: fetched {len(data)} records")  # temporary debug output
+                    return df 
 
         # --- fallback: existing HTML parser if API unavailable ---
         html = _cached_pull(url)
