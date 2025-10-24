@@ -220,7 +220,7 @@ try:
 
     if not draw_rows:
         st.warning(f"{game}: No valid draw rows found in JSON.")
-        return None
+    return None
 
     df_new = pd.DataFrame(draw_rows)
     df_new["game"] = game
