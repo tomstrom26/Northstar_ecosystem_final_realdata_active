@@ -174,6 +174,7 @@ def pull_official(game: str, url: str) -> pd.DataFrame:
                     )
                     return df
                     
+
 # --- set up API URL and headers for full pull ---
 api_urls = {
     "N5": "https://data.mn.gov/resource/3x3v-hdx5.json?$limit=5000&$order=draw_date%20DESC",
@@ -196,7 +197,6 @@ if r.status_code != 200:
 
 data = r.json()
 st.write(f"{game}: fetched {len(data)} records")  # temporary debug output
-
 
         # --- fallback: existing HTML parser if API unavailable ---
         html = _cached_pull(url)
