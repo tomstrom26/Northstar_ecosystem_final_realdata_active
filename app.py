@@ -478,7 +478,7 @@ for g in GAMES:
         st.success(f"{g}: ✅ Updated confidence trends — {conf:.1f}% confidence.")
     else:
         st.warning(f"{g}: No viable pick returned from adaptive scheduler.")
-                if not hist.empty:
+                    if not hist.empty:
                     latest = hist.iloc[0]
                     actual = [int(latest[f"n{k}"]) for k in range(1, 6)]
                     score_performance(g, pick, actual)
