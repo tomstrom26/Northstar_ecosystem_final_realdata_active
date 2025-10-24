@@ -139,8 +139,8 @@ import streamlit as st
 
 
     # Try GitHub, then proxy
-    data = fetch_json(github_urls[game])
-    if data is None:
+     data = fetch_json(github_urls[game])
+     if data is None:
         st.info(f"{game}: Retrying via Jina proxy…")
         data = fetch_json(proxy_urls[game])
 
@@ -203,8 +203,8 @@ def pull_official(game):
     os.makedirs(folder, exist_ok=True)
     filename = os.path.join(folder, f"{game}_history.csv")
 
-   # Try GitHub, then proxy
-   data = fetch_json(github_urls[game])
+    # Try GitHub, then proxy
+    data = fetch_json(github_urls[game])
     if data is None:
         st.info(f"{game}: Retrying via proxy...")
         data = fetch_json(proxy_urls[game])
