@@ -135,17 +135,26 @@ import streamlit as st
 
 def pull_official(game):
     """
-    Pulls official Minnesota Lottery JSON data from api.mnlottery.com.
-    Saves and merges historical data for N5, G5, PB.
+    Pulls Minnesota Lottery results using a resilient dual-source system:
+    - First tries via Cloudflare CDN JSON
+    - If unreachable (DNS/404), retries via Jina.ai proxy mirror
+    Auto-merges and saves historical draw data.
     """
 
-    api_urls = {
-        "N5": "https://api.mnlottery.com/api/v1/games/northstar-cash/draws?limit=5000",
-        "G5": "https://api.mnlottery.com/api/v1/games/gopher-5/draws?limit=5000",
-        "PB": "https://api.mnlottery.com/api/v1/games/powerball/draws?limit=5000"
+    # Primary and backup URLs for each game
+    api_urls_primary = {
+        "N5": "https://www.mnlottery.com/api/v1/game/northstar-cash/draws?limit=5000",
+        "G5": "https://www.mnlottery.com/api/v1/game/gopher-5/draws?limit=5000",
+        "PB": "https://www.mnlottery.com/api/v1/game/powerball/draws?limit=5000"
     }
 
-    if game not in api_urls:
+    api_urls_backup = {
+        "N5": "https://r.jina.ai/https://www.mnlottery.com/api/v1/game/northstar-cash/draws?limit=5000",
+        "G5": "https://r.jina.ai/https://www.mnlottery.com/api/v1/game/gopher-5/draws?limit=5000",
+        "PB": "https://r.jina.ai/https://www.mnlottery.com/api/v1/game/powerball/draws?limit=5000"
+    }
+
+    if game not in api_urls_primary:
         st.error(f"No API mapping found for {game}.")
         return None
 
@@ -153,33 +162,51 @@ def pull_official(game):
     os.makedirs(folder, exist_ok=True)
     filename = os.path.join(folder, f"{game}_history.csv")
 
-    try:
-        url = api_urls[game]
-        resp = requests.get(url, timeout=15)
-        resp.raise_for_status()
-        data = resp.json()
+    def fetch_json(url):
+        """Internal helper for JSON pulls."""
+        try:
+            resp = requests.get(url, timeout=15)
+            resp.raise_for_status()
+            return resp.json()
+        except Exception as e:
+            st.warning(f"{game}: Fetch failed for {url.split('?')[0]} — {e}")
+            return None
 
-        # Parse JSON
+    # Try primary first, then backup if needed
+    data = fetch_json(api_urls_primary[game])
+    if data is None:
+        st.info(f"{game}: Retrying via proxy mirror…")
+        data = fetch_json(api_urls_backup[game])
+
+    if data is None:
+        st.error(f"{game}: ❌ All sources failed.")
+        if os.path.exists(filename):
+            st.warning(f"{game}: Using last saved history file.")
+            return pd.read_csv(filename)
+        return None
+
+    try:
+        # Parse JSON into DataFrame
         draw_rows = []
-        for draw in data.get("items", []):
+        # Handle both direct list & wrapped "items" formats
+        items = data.get("items", data if isinstance(data, list) else [])
+        for draw in items:
             draw_date = draw.get("draw_date") or draw.get("drawDate")
             numbers = draw.get("winning_numbers") or draw.get("numbers")
             if not draw_date or not numbers:
                 continue
-
-            # Flatten into a simple 5-number list
-            nums = [int(n) for n in numbers.split(",") if n.isdigit()]
+            nums = [int(n) for n in str(numbers).replace(" ", "").split(",") if n.isdigit()]
             if len(nums) >= 5:
                 draw_rows.append([draw_date] + nums[:5])
 
         if not draw_rows:
-            st.warning(f"{game}: No draws found in official API feed.")
+            st.warning(f"{game}: No draw results parsed from JSON.")
             return None
 
         new_df = pd.DataFrame(draw_rows, columns=["date", "n1", "n2", "n3", "n4", "n5"])
         new_df["game"] = game
 
-        # Merge with previous data if exists
+        # Merge with previous historical data
         if os.path.exists(filename):
             old_df = pd.read_csv(filename)
             merged = pd.concat([old_df, new_df]).drop_duplicates(subset=["date"], keep="last").sort_values("date")
@@ -187,11 +214,11 @@ def pull_official(game):
             merged = new_df
 
         merged.to_csv(filename, index=False)
-        st.success(f"{game}: ✅ Pulled {len(new_df)} draws, merged to {len(merged)} total.")
+        st.success(f"{game}: ✅ Pulled {len(new_df)} new draws, merged to {len(merged)} total.")
         return merged
 
     except Exception as e:
-        st.error(f"{game} fetch failed: {e}")
+        st.error(f"{game}: JSON parse error — {e}")
         if os.path.exists(filename):
             st.warning(f"{game}: Using last saved history file.")
             return pd.read_csv(filename)
