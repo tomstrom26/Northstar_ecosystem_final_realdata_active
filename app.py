@@ -127,77 +127,53 @@ def _cached_pull(url: str) -> str:
 # -----------------------------
 # Robust MN HTML parse
 # -----------------------------
-def pull_official(game: str, url: str) -> pd.DataFrame:
+def pull_official(game):
     """
-    Pulls full historical data from Minnesota Lottery open-data JSON feeds
-    when available, falling back to HTML scrape if needed.
-    Returns DataFrame: date, n1..n5, game
+    Pull official lottery data for Northstar (N5), Gopher 5 (G5), and Powerball (PB)
+    using MN Open Data + NY Powerball JSON feeds.
     """
+    import requests
+    import pandas as pd
+    import streamlit as st
+
+    # --- set up API URLs ---
+    api_urls = {
+        "N5": "https://data.mn.gov/resource/3x3v-hdx5.json?$limit=5000&$order=draw_date%20DESC",
+        "G5": "https://data.mn.gov/resource/bpww-ctz7.json?$limit=5000&$order=draw_date%20DESC",
+        "PB": "https://data.ny.gov/resource/d6yy-54nr.json?$limit=5000&$order=draw_date%20DESC"
+    }
+
+    # --- headers with your MN Open Data App Token ---
+    headers = {
+        "User-Agent": "Mozilla/5.0",
+        "X-App-Token": "YOUR_APP_TOKEN_HERE"
+    }
+
     try:
-        # --- Full-history API feeds ---
-        api_urls = {
-            "N5": "https://data.mn.gov/resource/3x3v-hdx5.json",   # Northstar Cash
-            "G5": "https://data.mn.gov/resource/bpww-ctz7.json",   # Gopher 5
-            "PB": "https://data.ny.gov/resource/d6yy-54nr.json"    # Powerball (national feed)
-        }
+        r = requests.get(api_urls[game], timeout=30, headers=headers)
 
-        if game in api_urls:
-            r = requests.get(api_urls[game], timeout=30, headers={"User-Agent": "Mozilla/5.0"})
-            if r.status_code == 200:
-                data = r.json()
-                rows = []
+        if r.status_code != 200:
+            st.warning(f"{game}: feed returned {r.status_code}")
+            return pd.DataFrame(columns=["date", "n1", "n2", "n3", "n4", "n5", "game"])
 
-                for d in data:
-                    # Different datasets use slightly different field names
-                    date_str = d.get("draw_date") or d.get("draw_date_text") or d.get("date")
-                    nums_text = d.get("winning_numbers") or d.get("numbers") or ""
-                    nums = [int(x) for x in re.findall(r"\d+", nums_text)]
+        data = r.json()
+        st.write(f"{game}: fetched {len(data)} records")  # temporary debug
 
-                    if len(nums) >= 5:
-                        row = {
-                            "date": pd.to_datetime(date_str, errors="coerce"),
-                            "n1": nums[0],
-                            "n2": nums[1],
-                            "n3": nums[2],
-                            "n4": nums[3],
-                            "n5": nums[4],
-                            "game": game
-                        }
-                        rows.append(row)
+        # --- basic JSON parse for MN / NY feeds ---
+        records = []
+        for row in data:
+            numbers = row.get("winning_numbers", "").replace(",", " ").split()
+            if len(numbers) >= 5:
+                date = row.get("draw_date", "Unknown")
+                records.append([date] + numbers[:5] + [game])
 
-                df = pd.DataFrame(rows)
-                if not df.empty:
-                    df = (
-                        df.dropna(subset=["date"])
-                          .drop_duplicates(subset=["date", "n1", "n2", "n3", "n4", "n5"])
-                          .sort_values("date", ascending=False)
-                    )
-                    return df
-                    
+        df = pd.DataFrame(records, columns=["date", "n1", "n2", "n3", "n4", "n5", "game"])
+        return df
 
-# --- set up API URL and headers for full pull ---
-api_urls = {
-    "N5": "https://data.mn.gov/resource/3x3v-hdx5.json?$limit=5000&$order=draw_date%20DESC",
-    "G5": "https://data.mn.gov/resource/bpww-ctz7.json?$limit=5000&$order=draw_date%20DESC",
-    "PB": "https://data.ny.gov/resource/d6yy-54nr.json?$limit=5000&$order=draw_date%20DESC"
-}
-
-headers = {
-    "User-Agent": "Mozilla/5.0",
-    # 👇 paste your real token between the quotes
-    "X-App-Token": "YOUR_APP_TOKEN_HERE"
-}
-
-r = requests.get(api_urls[game], timeout=30, headers=headers)
-
-# quick status + data size check
-if r.status_code != 200:
-    log_line(f"{game} feed returned {r.status_code}")
-    return pd.DataFrame(columns=["date", "n1", "n2", "n3", "n4", "n5", "game"])
-
-data = r.json()
-st.write(f"{game}: fetched {len(data)} records")  # temporary debug output
-
+    except Exception as e:
+        st.error(f"{game} fetch failed: {e}")
+        return pd.DataFrame(columns=["date", "n1", "n2", "n3", "n4", "n5", "game"])
+                   
         # --- fallback: existing HTML parser if API unavailable ---
         html = _cached_pull(url)
         soup = BeautifulSoup(html, "html.parser")
