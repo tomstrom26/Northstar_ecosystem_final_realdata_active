@@ -148,11 +148,11 @@ def pull_official(game):
     }
 
     # 2️⃣ Proxy relay fallback
-    proxy_urls = {
-        "N5": "https://r.jina.ai/https://www.mnlottery.com/api/v1/game/northstar-cash/draws?limit=5000",
-        "G5": "https://r.jina.ai/https://www.mnlottery.com/api/v1/game/gopher-5/draws?limit=5000",
-        "PB": "https://r.jina.ai/https://www.mnlottery.com/api/v1/game/powerball/draws?limit=5000"
-    }
+urls = {
+    "N5": "https://raw.githubusercontent.com/Minnesota-Lottery-Data/mnlottery-json/main/northstar_cash.json",
+    "G5": "https://raw.githubusercontent.com/Minnesota-Lottery-Data/mnlottery-json/main/gopher_5.json",
+    "PB": "https://raw.githubusercontent.com/Minnesota-Lottery-Data/mnlottery-json/main/powerball.json"
+}
 
     if game not in github_urls:
         st.error(f"No source mapping found for {game}.")
