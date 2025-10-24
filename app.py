@@ -196,7 +196,7 @@ if data is None:
     if os.path.exists(filename):
         st.warning(f"{game}: Using cached local file.")
         with open(filename, "r") as f:
-            return json.load(f)
+        return json.load(f)
     return None
 
 st.warning(f"{game}: Using new data structure")
