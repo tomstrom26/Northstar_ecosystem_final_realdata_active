@@ -196,7 +196,7 @@ if r.status_code != 200:
 
 data = r.json()
 st.write(f"{game}: fetched {len(data)} records")  # temporary debug output
-)return df 
+
 
         # --- fallback: existing HTML parser if API unavailable ---
         html = _cached_pull(url)
