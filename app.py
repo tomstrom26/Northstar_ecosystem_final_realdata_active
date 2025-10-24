@@ -19,8 +19,11 @@ import pandas as pd
 import pytz
 import requests
 from bs4 import BeautifulSoup
-
+import os
+import requests
+import pandas as pd
 import streamlit as st
+
 
 # -----------------------------
 # Config / paths
@@ -125,42 +128,6 @@ def save_manifest(m:dict):
 @st.cache_data(ttl=1800, show_spinner=False)
 def _cached_pull(url: str) -> str:
     r = requests.get(url, timeout=20, headers={"User-Agent":"Mozilla/5.0 (Northstar)"})
-    r.raise_for_status()
-    return r.text
-
-# -----------------------------
-# Robust MN HTML parse
-# -----------------------------
-
-import os
-import requests
-import pandas as pd
-import streamlit as st
-
-    # Try GitHub, then proxy
-    data = fetch_json(github_urls[game])
-    if data is None:
-        st.info(f"{game}: Retrying via Jina proxy…")
-        data = fetch_json(proxy_urls[game])
-
-    # If a raw list comes back, wrap it
-    if isinstance(data, list):
-        data = {"draws": data}
-
-    # Fallback to local file if both remotes fail
-    if data is None:
-        st.error(f"{game}: ❌ All remote sources failed.")
-        if os.path.exists(filename):
-            st.warning(f"{game}: Using cached local file.")
-            try:
-                return pd.read_csv(filename)
-            except Exception:
-                return pd.DataFrame(columns=["date","n1","n2","n3","n4","n5","game"])
-        return pd.DataFrame(columns=["date","n1","n2","n3","n4","n5","game"])
-
-    # Normalize + save + return
-    df = normalize_and_save_draws(game, data, filename)
-    return df if df is not None else pd.DataFrame(columns=["date","n1","n2","n3","n4","n5","game"])
 
 # --------------------------------------------------------------------
 # Fetch JSON helper
