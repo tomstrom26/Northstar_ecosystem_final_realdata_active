@@ -129,41 +129,52 @@ def _cached_pull(url: str) -> str:
 # -----------------------------
 def pull_official(game: str, url: str) -> pd.DataFrame:
     """
-    Pulls full historical data via MN Lottery JSON API when possible,
-    falling back to HTML scrape if the API is unavailable.
+    Pulls full historical data from Minnesota Lottery open-data JSON feeds
+    when available, falling back to HTML scrape if needed.
+    Returns DataFrame: date, n1..n5, game
     """
     try:
-        # --- JSON endpoints for complete historical data ---
+        # --- Full-history API feeds ---
         api_urls = {
-            "N5": "https://www.mnlottery.com/api/v2/draw-game-data/northstar-cash",
-            "G5": "https://www.mnlottery.com/api/v2/draw-game-data/gopher-5",
-            "PB": "https://www.mnlottery.com/api/v2/draw-game-data/powerball"
+            "N5": "https://data.mn.gov/resource/3x3v-hdx5.json",   # Northstar Cash
+            "G5": "https://data.mn.gov/resource/bpww-ctz7.json",   # Gopher 5
+            "PB": "https://data.ny.gov/resource/d6yy-54nr.json"    # Powerball (national feed)
         }
+
         if game in api_urls:
-            r = requests.get(api_urls[game], timeout=25, headers={"User-Agent": "Mozilla/5.0"})
+            r = requests.get(api_urls[game], timeout=30, headers={"User-Agent": "Mozilla/5.0"})
             if r.status_code == 200:
                 data = r.json()
-                draws = data.get("draws", [])
-                if draws:
-                    rows = []
-                    for d in draws:
-                        if isinstance(d.get("winningNumbers"), list) and len(d["winningNumbers"]) >= 5:
-                            row = {
-                                "date": pd.to_datetime(d.get("drawDate")),
-                                "n1": int(d["winningNumbers"][0]),
-                                "n2": int(d["winningNumbers"][1]),
-                                "n3": int(d["winningNumbers"][2]),
-                                "n4": int(d["winningNumbers"][3]),
-                                "n5": int(d["winningNumbers"][4]),
-                                "game": game
-                            }
-                            rows.append(row)
-                    df = pd.DataFrame(rows)
-                    if not df.empty:
-                        df = df.dropna(subset=["date"]).drop_duplicates(subset=["date"]).sort_values("date", ascending=False)
-                        return df
+                rows = []
 
-        # --- fallback: existing HTML parser ---
+                for d in data:
+                    # Different datasets use slightly different field names
+                    date_str = d.get("draw_date") or d.get("draw_date_text") or d.get("date")
+                    nums_text = d.get("winning_numbers") or d.get("numbers") or ""
+                    nums = [int(x) for x in re.findall(r"\d+", nums_text)]
+
+                    if len(nums) >= 5:
+                        row = {
+                            "date": pd.to_datetime(date_str, errors="coerce"),
+                            "n1": nums[0],
+                            "n2": nums[1],
+                            "n3": nums[2],
+                            "n4": nums[3],
+                            "n5": nums[4],
+                            "game": game
+                        }
+                        rows.append(row)
+
+                df = pd.DataFrame(rows)
+                if not df.empty:
+                    df = (
+                        df.dropna(subset=["date"])
+                          .drop_duplicates(subset=["date", "n1", "n2", "n3", "n4", "n5"])
+                          .sort_values("date", ascending=False)
+                    )
+                    return df
+
+        # --- fallback: existing HTML parser if API unavailable ---
         html = _cached_pull(url)
         soup = BeautifulSoup(html, "html.parser")
         blocks = soup.select("li, article, div")
@@ -181,15 +192,18 @@ def pull_official(game: str, url: str) -> pd.DataFrame:
                     row[f"n{i+1}"] = int(nums[i])
                 row["game"] = game
                 rows.append(row)
+
         df = pd.DataFrame(rows)
         if not df.empty:
-            df = df.drop_duplicates(subset=["date", "n1", "n2", "n3", "n4", "n5"]).sort_values("date", ascending=False)
+            df = (
+                df.drop_duplicates(subset=["date", "n1", "n2", "n3", "n4", "n5"])
+                  .sort_values("date", ascending=False)
+            )
         return df
 
     except Exception as e:
         log_line(f"pull_official error {game}: {e}")
         return pd.DataFrame(columns=["date", "n1", "n2", "n3", "n4", "n5", "game"])
-
 # -----------------------------
 # Persistence: histories / logs
 # -----------------------------
