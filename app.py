@@ -185,17 +185,9 @@ def fetch_json(url):
     except Exception as e:
         return None
 
+data = fetch_json(proxy_urls[game])
 
-# --------------------------------------------------------------------
-# Pull from GitHub or proxy + normalize JSON
-# --------------------------------------------------------------------
-# Try GitHub first
-data = fetch_json(github_urls[game])
-if data is None:
-    st.info(f"{game}: Retrying via Jina proxy…")
-    data = fetch_json(proxy_urls[game])
-
-# Normalize JSON structure (fixes “list object has no attribute 'get'”)
+# 🧩 Normalize JSON structure (fix list-type returns)
 if isinstance(data, list):
     data = {"draws": data}
 
@@ -207,9 +199,8 @@ if data is None:
             return json.load(f)
     return None
 
-st.warning(f"{game}: Using new data structure.")
-return pd.read_csv(filename)  # keep if needed for older fallback behavior
-
+st.warning(f"{game}: Using new data structure")
+return pd.read_csv(filename)
 
 # --------------------------------------------------------------------
 # Normalize, merge, and save draw history
