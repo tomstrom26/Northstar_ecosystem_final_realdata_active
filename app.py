@@ -127,26 +127,26 @@ def _cached_pull(url: str) -> str:
 # -----------------------------
 # Robust MN HTML parse
 # -----------------------------
+
 import os
 import requests
 import pandas as pd
-from bs4 import BeautifulSoup
 import streamlit as st
 
 def pull_official(game):
     """
-    Pulls Minnesota Lottery results from official MN Lottery game pages.
-    Auto-saves and merges historical draw data.
+    Pulls official Minnesota Lottery JSON data from api.mnlottery.com.
+    Saves and merges historical data for N5, G5, PB.
     """
 
-    urls = {
-        "N5": "https://www.mnlottery.com/games/northstar-cash-winning-numbers",
-        "G5": "https://www.mnlottery.com/games/gopher-5",
-        "PB": "https://www.mnlottery.com/games/powerball"
+    api_urls = {
+        "N5": "https://api.mnlottery.com/api/v1/games/northstar-cash/draws?limit=5000",
+        "G5": "https://api.mnlottery.com/api/v1/games/gopher-5/draws?limit=5000",
+        "PB": "https://api.mnlottery.com/api/v1/games/powerball/draws?limit=5000"
     }
 
-    if game not in urls:
-        st.error(f"No URL mapping found for {game}.")
+    if game not in api_urls:
+        st.error(f"No API mapping found for {game}.")
         return None
 
     folder = "./data"
@@ -154,37 +154,32 @@ def pull_official(game):
     filename = os.path.join(folder, f"{game}_history.csv")
 
     try:
-        url = urls[game]
+        url = api_urls[game]
         resp = requests.get(url, timeout=15)
         resp.raise_for_status()
-        soup = BeautifulSoup(resp.text, "html.parser")
+        data = resp.json()
 
+        # Parse JSON
         draw_rows = []
+        for draw in data.get("items", []):
+            draw_date = draw.get("draw_date") or draw.get("drawDate")
+            numbers = draw.get("winning_numbers") or draw.get("numbers")
+            if not draw_date or not numbers:
+                continue
 
-        # Attempt primary HTML pattern
-        results_section = soup.find_all("div", class_="winning-numbers__result")
-
-        # Fallback pattern if the site changes layout
-        if not results_section:
-            results_section = soup.find_all("div", class_="numbers-list__result")
-
-        for block in results_section:
-            date_tag = block.find("div", class_="winning-numbers__date") or block.find("div", class_="numbers-list__date")
-            nums_tag = block.find_all("span", class_="ball") or block.find_all("li", class_="numbers-list__number")
-
-            if date_tag and nums_tag:
-                date = date_tag.text.strip()
-                nums = [int(n.text.strip()) for n in nums_tag if n.text.strip().isdigit()]
-                if len(nums) >= 5:
-                    draw_rows.append([date] + nums[:5])
+            # Flatten into a simple 5-number list
+            nums = [int(n) for n in numbers.split(",") if n.isdigit()]
+            if len(nums) >= 5:
+                draw_rows.append([draw_date] + nums[:5])
 
         if not draw_rows:
-            st.warning(f"{game}: No draw results parsed from MN Lottery page.")
+            st.warning(f"{game}: No draws found in official API feed.")
             return None
 
         new_df = pd.DataFrame(draw_rows, columns=["date", "n1", "n2", "n3", "n4", "n5"])
         new_df["game"] = game
 
+        # Merge with previous data if exists
         if os.path.exists(filename):
             old_df = pd.read_csv(filename)
             merged = pd.concat([old_df, new_df]).drop_duplicates(subset=["date"], keep="last").sort_values("date")
@@ -198,9 +193,11 @@ def pull_official(game):
     except Exception as e:
         st.error(f"{game} fetch failed: {e}")
         if os.path.exists(filename):
-            st.warning(f"{game}: Using last saved history.")
+            st.warning(f"{game}: Using last saved history file.")
             return pd.read_csv(filename)
         return None
+
+# -----------------------------
 # Persistence: histories / logs
 # -----------------------------
 def save_history(game:str, df_new:pd.DataFrame) -> pd.DataFrame:
