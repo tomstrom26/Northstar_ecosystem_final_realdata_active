@@ -171,6 +171,9 @@ def pull_official(game: str, url: str) -> pd.DataFrame:
                         df.dropna(subset=["date"])
                           .drop_duplicates(subset=["date", "n1", "n2", "n3", "n4", "n5"])
                           .sort_values("date", ascending=False)
+                    )
+                    return df
+                    
                     # --- set up API URL and headers for full pull ---
 api_urls = {
     "N5": "https://data.mn.gov/resource/3x3v-hdx5.json?$limit=5000&$order=draw_date%20DESC",
