@@ -316,7 +316,7 @@ def score_performance(game:str, predicted:List[int], actual:List[int]):
 # Weekly archive + manifest
 # -----------------------------
 
-    def weekly_archive_if_needed():
+def weekly_archive_if_needed():
     # Make a zip each Sunday ~16:00 CST
     now = now_ct()
     if now.weekday()==6 and 16 <= now.hour < 17:  # Sunday hour window
@@ -359,7 +359,7 @@ def build_trickle_seed(n5_hist:pd.DataFrame, window:int=20) -> Dict[int,float]:
 # Adaptive simulation (with dynamic trickle weighting)
 # -----------------------------
 
-    def adaptive_simulation(df:pd.DataFrame, game:str, trickle:Dict[int,float]|None=None) -> (List[int], float):
+def adaptive_simulation(df:pd.DataFrame, game:str, trickle:Dict[int,float]|None=None) -> (List[int], float):
     if df is None or df.empty: return [], 0.0
     cols=["n1","n2","n3","n4","n5"]
     recent = df.head(40).copy()
