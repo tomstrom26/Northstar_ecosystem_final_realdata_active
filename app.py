@@ -219,9 +219,9 @@ try:
             draw_rows.append({"date": draw_date, "numbers": numbers})
 
     if not draw_rows:
-        st.warning(f"{game}: No valid draw rows found in JSON.")
-                      return None
-
+        st.warning(f"{game}: No valid data found in JSON.")
+        return None
+   
     df_new = pd.DataFrame(draw_rows)
     df_new["game"] = game
 
