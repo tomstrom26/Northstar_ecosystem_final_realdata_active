@@ -133,47 +133,32 @@ import requests
 import pandas as pd
 import streamlit as st
 
-def pull_official(game):
-    """
-    Pulls Minnesota Lottery results using:
-    1. GitHub JSON mirror
-    2. Jina proxy relay
-    3. Local cached CSV
-    """
 
-    # GitHub data source mapping
-    github_urls = {
-        "N5": "https://raw.githubusercontent.com/tomstrom26/Minnesota-Lottery-Data-mnlottery-json/main/northstar_cash.json",
-        "G5": "https://raw.githubusercontent.com/tomstrom26/Minnesota-Lottery-Data-mnlottery-json/main/gopher_5.json",
-        "PB": "https://raw.githubusercontent.com/tomstrom26/Minnesota-Lottery-Data-mnlottery-json/main/powerball.json"
-    }
+    # Try GitHub, then proxy
+    data = fetch_json(github_urls[game])
+    if data is None:
+        st.info(f"{game}: Retrying via Jina proxy…")
+        data = fetch_json(proxy_urls[game])
 
-    # Proxy fallback sources (Jina relay)
-    proxy_urls = {
-        "N5": "https://r.jina.ai/https://raw.githubusercontent.com/tomstrom26/Minnesota-Lottery-Data-mnlottery-json/main/northstar_cash.json",
-        "G5": "https://r.jina.ai/https://raw.githubusercontent.com/tomstrom26/Minnesota-Lottery-Data-mnlottery-json/main/gopher_5.json",
-        "PB": "https://r.jina.ai/https://raw.githubusercontent.com/tomstrom26/Minnesota-Lottery-Data-mnlottery-json/main/powerball.json"
-    }
+    # If a raw list comes back, wrap it
+    if isinstance(data, list):
+        data = {"draws": data}
 
-    # Check for missing mapping
-    if game not in github_urls:
-        error(f"No source mapping found for {game}")
-        return None
+    # Fallback to local file if both remotes fail
+    if data is None:
+        st.error(f"{game}: ❌ All remote sources failed.")
+        if os.path.exists(filename):
+            st.warning(f"{game}: Using cached local file.")
+            try:
+                return pd.read_csv(filename)
+            except Exception:
+                return pd.DataFrame(columns=["date","n1","n2","n3","n4","n5","game"])
+        return pd.DataFrame(columns=["date","n1","n2","n3","n4","n5","game"])
 
-    folder = "./data"
-    os.makedirs(folder, exist_ok=True)
-    filename = os.path.join(folder, f"{game}_history.json")
+    # Normalize + save + return
+    df = normalize_and_save_draws(game, data, filename)
+    return df if df is not None else pd.DataFrame(columns=["date","n1","n2","n3","n4","n5","game"])
 
-    def fetch_json(url):
-        try:
-            r = requests.get(url, timeout=10)
-            r.raise_for_status()
-            return r.json()
-        except Exception as e:
-            return None
-    folder = "./data"
-    os.makedirs(folder, exist_ok=True)
-    filename = os.path.join(folder, f"{game}_history.json")
 # --------------------------------------------------------------------
 # Fetch JSON helper
 # --------------------------------------------------------------------
@@ -185,23 +170,31 @@ def fetch_json(url):
     except Exception as e:
         return None
 
-def load_history(game, filename, proxy_urls):
-    data = fetch_json(proxy_urls[game])
+def pull_official(game):
+    """
+    Pulls MN Lottery results from GitHub (primary) with a Jina proxy fallback,
+    then normalizes and persists to ./data/{GAME}_history.csv.
+    Returns a DataFrame with columns: date, n1..n5, game
+    """
+    github_urls = {
+        "N5": "https://raw.githubusercontent.com/tomstrom26/Minnesota-Lottery-Data-mnlottery-json/main/northstar_cash.json",
+        "G5": "https://raw.githubusercontent.com/tomstrom26/Minnesota-Lottery-Data-mnlottery-json/main/gopher_5.json",
+        "PB": "https://raw.githubusercontent.com/tomstrom26/Minnesota-Lottery-Data-mnlottery-json/main/powerball.json",
+    }
+    proxy_urls = {
+        "N5": "https://r.jina.ai/https://raw.githubusercontent.com/tomstrom26/Minnesota-Lottery-Data-mnlottery-json/main/northstar_cash.json",
+        "G5": "https://r.jina.ai/https://raw.githubusercontent.com/tomstrom26/Minnesota-Lottery-Data-mnlottery-json/main/gopher_5.json",
+        "PB": "https://r.jina.ai/https://raw.githubusercontent.com/tomstrom26/Minnesota-Lottery-Data-mnlottery-json/main/powerball.json",
+    }
 
-    # 🧩 Normalize JSON structure (fix list-type returns)
-    if isinstance(data, list):
-        data = {"draws": data}
+    if game not in github_urls:
+        st.error(f"{game}: No source mapping found.")
+        return pd.DataFrame()
 
-    if data is None:
-        st.error(f"{game}: ❌ All remote sources failed.")
-        if os.path.exists(filename):
-            st.warning(f"{game}: Using cached local file.")
-            with open(filename, "r") as f:
-                return json.load(f)
-    return None
+    folder = "./data"
+    os.makedirs(folder, exist_ok=True)
+    filename = os.path.join(folder, f"{game}_history.csv")
 
-    st.warning(f"{game}: Using new data structure")
-    return pd.read_csv(filename)
 
 # --------------------------------------------------------------------
 # Normalize, merge, and save draw history
