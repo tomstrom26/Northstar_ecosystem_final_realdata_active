@@ -140,23 +140,17 @@ def pull_official(game):
     2. Jina proxy relay
     3. Local cached CSV
     """
-    # 1️⃣ GitHub mirror (fast + works on Streamlit)
-    github_urls = {
-        "N5": "https://raw.githubusercontent.com/Minnesota-Lottery-Data/mnlottery-json/main/northstar_cash.json",
-        "G5": "https://raw.githubusercontent.com/Minnesota-Lottery-Data/mnlottery-json/main/gopher_5.json",
-        "PB": "https://raw.githubusercontent.com/Minnesota-Lottery-Data/mnlottery-json/main/powerball.json"
-    }
-
-    # 2️⃣ Proxy relay fallback
-urls = {
+    # GitHub data source mapping
+github_urls = {
     "N5": "https://raw.githubusercontent.com/Minnesota-Lottery-Data/mnlottery-json/main/northstar_cash.json",
     "G5": "https://raw.githubusercontent.com/Minnesota-Lottery-Data/mnlottery-json/main/gopher_5.json",
     "PB": "https://raw.githubusercontent.com/Minnesota-Lottery-Data/mnlottery-json/main/powerball.json"
 }
 
- if game not in github_urls:
-        st.error(f"No source mapping found for {game}.")
-        return None
+# Check for missing mapping
+if game not in github_urls:
+    error(f"No source mapping found for {game}")
+    return None
 
     folder = "./data"
     os.makedirs(folder, exist_ok=True)
