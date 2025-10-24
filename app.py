@@ -1,178 +1,481 @@
 # ==========================================================
-# 🌟 Northstar Ecosystem — Adaptive Scheduler v3
+# 🌟 Northstar Ecosystem — v4.0 (Autonomous Edition)
 # ==========================================================
-import streamlit as st
-import pandas as pd
+# • Official MN pulls (robust HTML parser + 30m cache)
+# • Schedule windows (CST) + safe auto-tick per refresh
+# • Persistent storage (/data) + weekly .zip archives + manifest
+# • Confidence & performance logs + charts
+# • Trickle-down cross-influence (N5 → G5/PB; adaptive by confidence)
+# • Optional GitHub persistence via st.secrets["github"]
+# ==========================================================
+
+import os, io, re, json, zipfile, hashlib
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Dict, List
+
 import numpy as np
-import re
+import pandas as pd
+import pytz
 import requests
 from bs4 import BeautifulSoup
-from datetime import datetime
 
-# ==========================================================
-# 🎯 Minnesota Lottery Official Sources (Auto Prefill)
-# ==========================================================
+import streamlit as st
+
+# -----------------------------
+# Config / paths
+# -----------------------------
+APP_VER = "4.0"
+TZ = pytz.timezone("America/Chicago")
+ROOT = Path(".")
+DATA = ROOT / "data"
+LOGS = DATA / "logs"
+ARCH = DATA / "archives"
+DATA.mkdir(exist_ok=True); LOGS.mkdir(exist_ok=True); ARCH.mkdir(exist_ok=True)
+
+CONF_PATH = DATA / "confidence_trends.csv"
+PERF_PATH = DATA / "performance_log.csv"
+MANIFEST = DATA / "manifest.json"
+
+GAMES = ["N5","G5","PB"]
 MN_SOURCES = {
     "N5": "https://www.mnlottery.com/games/draw-games/northstar-cash",
     "G5": "https://www.mnlottery.com/games/draw-games/gopher-5",
-    "PB": "https://www.mnlottery.com/games/draw-games/powerball"
+    "PB": "https://www.mnlottery.com/games/draw-games/powerball",
+}
+HIST_PATH = lambda g: DATA / f"{g}_history.csv"
+
+# Draw schedule windows (CST). We run once if current time within ±2 min of these.
+SCHEDULE = {
+    "N5": {"days": {0,1,2,3,4,5,6}, "post":"06:30", "pre":["09:00","11:00","14:00"], "final":"15:30"},
+    "G5": {"days": {0,2,4},          "post":"06:30", "pre":["09:00","11:00","14:00"], "final":"15:30"},
+    "PB": {"days": {0,2,5},          "post":"06:30", "pre":["09:00","11:00","14:00"], "final":"15:30"},
 }
 
-# ==========================================================
-# 🧩 Unified Fetch Function (MN Lottery + JSON fallback)
-# ==========================================================
-def fetch_draws(url, game_key):
+# -----------------------------
+# GitHub persistence (optional)
+# -----------------------------
+GH = st.secrets.get("github", {})
+GH_TOKEN = GH.get("token","")
+GH_OWNER = GH.get("owner","")
+GH_REPO  = GH.get("repo","")
+GH_BRANCH= GH.get("branch","main")
+
+def _gh_headers():
+    return {"Authorization": f"token {GH_TOKEN}", "Accept":"application/vnd.github+json"} if GH_TOKEN else {}
+
+def _gh_url(path:str):
+    return f"https://api.github.com/repos/{GH_OWNER}/{GH_REPO}/contents/{path}"
+
+def gh_write_text(path:str, text:str, message:str):
+    if not GH_TOKEN or not GH_OWNER or not GH_REPO: return False
+    try:
+        # get current sha (if exists)
+        r = requests.get(_gh_url(path), headers=_gh_headers(), params={"ref": GH_BRANCH}, timeout=15)
+        sha = r.json().get("sha") if r.status_code==200 else None
+        payload = {
+            "message": message,
+            "content": base64_encode(text),
+            "branch": GH_BRANCH
+        }
+        if sha: payload["sha"] = sha
+        r2 = requests.put(_gh_url(path), headers=_gh_headers(), json=payload, timeout=20)
+        return r2.status_code in (200,201)
+    except Exception:
+        return False
+
+def base64_encode(s: str) -> str:
+    import base64
+    return base64.b64encode(s.encode("utf-8")).decode("utf-8")
+
+# -----------------------------
+# Utilities
+# -----------------------------
+def now_ct():
+    return datetime.now(TZ)
+
+def parse_ints(tokens):
+    out=[]
+    for t in tokens:
+        out += [int(x) for x in re.findall(r"\d+", str(t))]
+    return out
+
+def log_line(msg:str):
+    ts = now_ct().strftime("%Y-%m-%d %H:%M:%S %Z")
+    with open(LOGS / "app.log", "a") as f:
+        f.write(f"[{ts}] {msg}\n")
+
+def load_manifest():
+    if MANIFEST.exists():
+        try: return json.loads(MANIFEST.read_text())
+        except: pass
+    return {"last_update": None, "next_planned": None, "synced": False, "ver": APP_VER}
+
+def save_manifest(m:dict):
+    m["ver"] = APP_VER
+    MANIFEST.write_text(json.dumps(m, indent=2))
+
+# -----------------------------
+# Cache: 30-minute pull cache
+# -----------------------------
+@st.cache_data(ttl=1800, show_spinner=False)
+def _cached_pull(url: str) -> str:
+    r = requests.get(url, timeout=20, headers={"User-Agent":"Mozilla/5.0 (Northstar)"})
+    r.raise_for_status()
+    return r.text
+
+# -----------------------------
+# Robust MN HTML parse
+# -----------------------------
+def pull_official(game:str, url:str) -> pd.DataFrame:
     """
-    Pulls and parses draw data from the MN Lottery site.
-    Falls back to JSON endpoints if HTML format changes.
+    Returns DataFrame: date, n1..n5, (optional bonus), game
     """
     try:
-        resp = requests.get(url, timeout=20, headers={"User-Agent": "Mozilla/5.0"})
-        resp.raise_for_status()
+        html = _cached_pull(url)
+        soup = BeautifulSoup(html, "html.parser")
+        blocks = soup.select("li, article, div")
 
-        # JSON fallback if available
-        if resp.headers.get("Content-Type", "").startswith("application/json"):
-            data = resp.json()
-            if isinstance(data, list):
-                df = pd.DataFrame(data)
-            elif isinstance(data, dict) and "draws" in data:
-                df = pd.DataFrame(data["draws"])
-            else:
-                df = pd.DataFrame()
-        else:
-            # Parse HTML results
-            soup = BeautifulSoup(resp.text, "html.parser")
-            draw_rows = soup.find_all("li", class_=re.compile("winning-numbers__item|draw-result|draw-date"))
-            draws = []
-            for row in draw_rows:
-                text = re.sub(r"\s+", " ", row.get_text(strip=True))
-                nums = re.findall(r"\d+", text)
-                if len(nums) >= 5:
-                    date_match = re.search(r"(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},\s+\d{4}", text)
-                    date = date_match.group(0) if date_match else "Unknown"
-                    draws.append({
-                        "date": date,
-                        "n1": int(nums[0]),
-                        "n2": int(nums[1]),
-                        "n3": int(nums[2]),
-                        "n4": int(nums[3]),
-                        "n5": int(nums[4]),
-                        "game": game_key
-                    })
-            df = pd.DataFrame(draws)
+        rows=[]
+        for b in blocks:
+            txt = " ".join(b.get_text(" ", strip=True).split())
+            # date like "January 1, 2025"
+            dm = re.search(r"(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},\s+\d{4}", txt)
+            nums = re.findall(r"\b\d+\b", txt)
+            if dm and len(nums) >= 5:
+                d = pd.to_datetime(dm.group(0), errors="coerce")
+                if pd.isna(d): continue
+                row = {"date": d}
+                for i in range(5):
+                    row[f"n{i+1}"] = int(nums[i])
+                if len(nums)>=6: row["bonus"]=int(nums[5])
+                row["game"]=game
+                rows.append(row)
 
+        df = pd.DataFrame(rows)
         if df.empty:
-            raise ValueError(f"No draw rows parsed for {game_key}")
-
-        # Cleanup + sort
-        if "date" in df.columns:
-            df["date"] = pd.to_datetime(df["date"], errors="coerce")
-            df = df.dropna(subset=["date"]).sort_values("date", ascending=False).reset_index(drop=True)
-
+            return pd.DataFrame(columns=["date","n1","n2","n3","n4","n5","game"])
+        df = df.drop_duplicates(subset=["date","n1","n2","n3","n4","n5"])
+        df = df.sort_values("date", ascending=False).reset_index(drop=True)
         return df
-
     except Exception as e:
-        print(f"⚠️ Error fetching {game_key}: {e}")
-        return pd.DataFrame(columns=["date", "n1", "n2", "n3", "n4", "n5", "game"])
+        log_line(f"pull_official error {game}: {e}")
+        return pd.DataFrame(columns=["date","n1","n2","n3","n4","n5","game"])
 
-# ==========================================================
-# 🧠 Adaptive Core Simulation (placeholder for your ecosystem)
-# ==========================================================
-def adaptive_simulation(df, game_key):
-    """
-    Placeholder for your Monte Carlo + clustering analysis.
-    Currently computes basic stats and confidence indicators.
-    """
-    if df.empty:
-        return pd.DataFrame(), 0
+# -----------------------------
+# Persistence: histories / logs
+# -----------------------------
+def save_history(game:str, df_new:pd.DataFrame) -> pd.DataFrame:
+    p = HIST_PATH(game)
+    if p.exists():
+        old = pd.read_csv(p)
+        old["date"] = pd.to_datetime(old["date"], errors="coerce")
+    else:
+        old = pd.DataFrame(columns=["date","n1","n2","n3","n4","n5","game"])
+    merged = pd.concat([old, df_new], ignore_index=True)
+    merged["date"] = pd.to_datetime(merged["date"], errors="coerce")
+    merged = merged.dropna(subset=["date"])
+    merged = merged.drop_duplicates(subset=["date","n1","n2","n3","n4","n5"]).sort_values("date", ascending=False)
+    merged.to_csv(p, index=False)
+    # Optional: push to GitHub
+    if GH_TOKEN:
+        gh_write_text(f"data/{p.name}", merged.to_csv(index=False), f"Update {game} history")
+    return merged
 
-    latest_five = df.head(5)
-    freq = pd.Series(np.concatenate([latest_five[['n1','n2','n3','n4','n5']].values])).value_counts()
-    top_nums = freq.head(5).index.tolist()
+def load_history(game:str) -> pd.DataFrame:
+    p = HIST_PATH(game)
+    if p.exists():
+        df = pd.read_csv(p)
+        df["date"]=pd.to_datetime(df["date"], errors="coerce")
+        return df.dropna(subset=["date"]).sort_values("date", ascending=False).reset_index(drop=True)
+    return pd.DataFrame(columns=["date","n1","n2","n3","n4","n5","game"])
 
-    confidence = round((len(freq) / 70) * 100, 2)
-    result = pd.DataFrame({
-        "game": [game_key],
-        "predicted_set": [top_nums],
-        "confidence_%": [confidence]
-    })
-    return result, confidence
+def log_confidence(game:str, conf:float):
+    row = pd.DataFrame([[now_ct(), game, conf]], columns=["timestamp","game","confidence"])
+    if CONF_PATH.exists():
+        old = pd.read_csv(CONF_PATH)
+        df = pd.concat([old, row], ignore_index=True)
+        if len(df) > 500: df = df.tail(500)
+    else:
+        df = row
+    df.to_csv(CONF_PATH, index=False)
+    if GH_TOKEN:
+        gh_write_text("data/confidence_trends.csv", df.to_csv(index=False), "Update confidence_trends")
 
-# ==========================================================
-# 🔄 Run and Merge All Draws
-# ==========================================================
-def run_all_draw_updates():
-    combined = {}
-    for g in ["N5", "G5", "PB"]:
-        url = MN_SOURCES.get(g)
-        df = fetch_draws(url, g)
-        combined[g] = df
-    return combined
+def score_performance(game:str, predicted:List[int], actual:List[int]):
+    aset = set(actual)
+    exact = len(set(predicted) & aset)
+    pm1 = sum(1 for p in predicted if any(abs(p-a)==1 for a in aset))
+    row = pd.DataFrame([[now_ct(), game, exact, pm1]], columns=["timestamp","game","exact","plusminus1"])
+    if PERF_PATH.exists():
+        old = pd.read_csv(PERF_PATH)
+        df = pd.concat([old, row], ignore_index=True)
+        if len(df) > 2000: df = df.tail(2000)
+    else:
+        df = row
+    df.to_csv(PERF_PATH, index=False)
+    if GH_TOKEN:
+        gh_write_text("data/performance_log.csv", df.to_csv(index=False), "Update performance_log")
 
-# ==========================================================
-# 📈 Display and Analysis Logic
-# ==========================================================
-def display_latest_draws():
-    st.header("🎯 Live latest draws")
-    results = run_all_draw_updates()
-    for g, df in results.items():
-        if not df.empty:
-            latest = df.iloc[0]
-            st.success(f"{g}: {latest['n1']} {latest['n2']} {latest['n3']} {latest['n4']} {latest['n5']} ({latest['date'].strftime('%b %d, %Y')})")
+# -----------------------------
+# Weekly archive + manifest
+# -----------------------------
+def weekly_archive_if_needed():
+    # Make a zip each Sunday ~16:00 CST
+    now = now_ct()
+    if now.weekday()==6 and 16 <= now.hour < 17:  # Sunday hour window
+        tag = now.strftime("%Y%m%d_%H%M")
+        zpath = ARCH / f"northstar_archive_{tag}.zip"
+        if not zpath.exists():
+            with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED) as z:
+                for f in DATA.glob("*.csv"):
+                    z.write(f, f.name)
+            if GH_TOKEN:
+                gh_write_text(f"data/archives/{zpath.name}", zpath.read_bytes().decode("latin1"), "Archive zip")  # store as bytes? (optional)
+
+def update_manifest(synced=False):
+    m = load_manifest()
+    m["last_update"] = now_ct().isoformat()
+    m["next_planned"] = (now_ct()+timedelta(minutes=30)).isoformat()
+    m["synced"] = bool(synced)
+    save_manifest(m)
+    if GH_TOKEN:
+        gh_write_text("data/manifest.json", json.dumps(m, indent=2), "Update manifest")
+
+# -----------------------------
+# Trickle-down seed
+# -----------------------------
+def build_trickle_seed(n5_hist:pd.DataFrame, window:int=20) -> Dict[int,float]:
+    if n5_hist is None or n5_hist.empty:
+        return {}
+    cols = ["n1","n2","n3","n4","n5"]
+    vals = np.concatenate(n5_hist.head(window)[cols].values)
+    freq = pd.Series(vals).value_counts()
+    seed={}
+    for n,f in freq.items():
+        n=int(n); seed[n]=float(f)
+        for d in (-1,1):
+            seed[n+d]=seed.get(n+d,0.0)+0.35
+    return seed
+
+# -----------------------------
+# Adaptive simulation (with dynamic trickle weighting)
+# -----------------------------
+def adaptive_simulation(df:pd.DataFrame, game:str, trickle:Dict[int,float]|None=None) -> (List[int], float):
+    if df is None or df.empty: return [], 0.0
+    cols=["n1","n2","n3","n4","n5"]
+    recent = df.head(40).copy()
+    vals = np.concatenate(recent[cols].values)
+    freq = pd.Series(vals).value_counts()
+
+    # cluster bonus (last 12 draws)
+    bonus = pd.Series(0.0, index=freq.index)
+    last12 = recent.head(12)
+    for _, row in last12.iterrows():
+        s=set(int(row[c]) for c in cols)
+        for n in s:
+            bonus.loc[n] = bonus.get(n,0.0) + (2.0 if len(s)>=3 else 1.0)
+
+    # trickle factor (if provided)
+    tr = pd.Series(0.0, index=freq.index)
+    if trickle:
+        for n,w in trickle.items():
+            n=int(n)
+            if n in tr.index: tr.loc[n]+=float(w)
+
+    # volatility (variance of last 10 draws)
+    last10 = recent.head(10)
+    vol = last10[cols].std().mean() if not last10.empty else 1.0
+    tighten = 0.85 if vol < 8.0 else 1.0
+
+    w = (freq.astype(float)*1.0 + bonus*0.72 + tr*0.28) * tighten
+    w = w[w>0].sort_values(ascending=False)
+    if w.empty: return [], 0.0
+
+    # Monte Carlo (random seed per run for variety)
+    rng = np.random.default_rng(int(datetime.now().timestamp()))
+    trials = 9000
+    bucket={}
+    base = w.copy()
+
+    last = set(int(x) for x in recent.iloc[0][cols].tolist())
+    base.loc[list(set(base.index) & last)] = base.loc[list(set(base.index) & last)] * 0.65
+
+    for _ in range(trials):
+        picks=set()
+        local=base.copy()
+        while len(picks)<5 and not local.empty:
+            pick = rng.choice(local.index, p=(local/local.sum()).values)
+            if pick not in picks:
+                picks.add(int(pick))
+                local = local.drop(index=pick, errors="ignore")
+        if len(picks)==5:
+            key=tuple(sorted(picks))
+            bucket[key]=bucket.get(key,0)+1
+
+    ranked = sorted(bucket.items(), key=lambda kv: kv[1], reverse=True)
+    top = list(ranked[0][0])
+    conf = round(min(100.0, (ranked[0][1]/trials)*100*1.35), 2)
+    return top, conf
+
+# -----------------------------
+# Schedule tick (safe, idempotent)
+# -----------------------------
+def within_window(hhmm:str, slack_min:int=2) -> bool:
+    hh,mm = map(int, hhmm.split(":"))
+    now = now_ct()
+    t0 = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
+    return abs((now - t0).total_seconds()) <= slack_min*60
+
+def should_run(game:str, phase:str) -> bool:
+    cfg = SCHEDULE[game]
+    if now_ct().weekday() not in cfg["days"]: return False
+    if phase=="post":  return within_window(cfg["post"])
+    if phase=="final": return within_window(cfg["final"])
+    if phase=="pre":   return any(within_window(t) for t in cfg["pre"])
+    return False
+
+def scheduler_tick(auto:bool=True):
+    # run any due phases once per window (tracked in session_state)
+    if "last_run_keys" not in st.session_state: st.session_state.last_run_keys=set()
+    due=[]
+    for g in GAMES:
+        for phase in ("post","pre","final"):
+            if should_run(g, phase):
+                key=f"{now_ct().date()}_{g}_{phase}"
+                if key not in st.session_state.last_run_keys:
+                    due.append((g, phase, key))
+    if not auto: return []
+
+    for g, phase, key in sorted(due, key=lambda x: x[0]):
+        run_phase(g, phase)
+        st.session_state.last_run_keys.add(key)
+
+    return due
+
+# -----------------------------
+# Single phase run (+ trickle)
+# -----------------------------
+def run_phase(game:str, phase:str):
+    st.info(f"Running **{phase}** for **{game}** …")
+    # Pull + save history
+    df_new = pull_official(game, MN_SOURCES[game])
+    if not df_new.empty:
+        hist = save_history(game, df_new)
+    else:
+        hist = load_history(game)
+
+    # Build trickle from N5
+    seed = build_trickle_seed(load_history("N5"), window=20)
+    trickle = seed if game in ("G5","PB") else None
+
+    pick, conf = adaptive_simulation(hist, game, trickle)
+    if pick:
+        st.success(f"{game} → pick {pick}  |  confidence {conf}%")
+        log_confidence(game, conf)
+
+        # score vs latest actual if available
+        if not hist.empty:
+            latest = hist.iloc[0]
+            actual = [int(latest[f"n{k}"]) for k in range(1,6)]
+            score_performance(game, pick, actual)
+    else:
+        st.warning(f"{game}: not enough data.")
+
+    weekly_archive_if_needed()
+    update_manifest(synced=bool(GH_TOKEN))
+
+# -----------------------------
+# UI
+# -----------------------------
+st.set_page_config(page_title=f"Northstar v{APP_VER}", page_icon="🌟", layout="wide")
+st.title(f"🌟 Northstar Ecosystem — v{APP_VER}")
+st.caption("Live official pulls • Auto storage • Trickle-down influence • Confidence & performance logging • CST schedules")
+
+# Health widget
+m = load_manifest()
+colH1, colH2, colH3 = st.columns(3)
+colH1.metric("Last update", (m.get("last_update") or "—"))
+colH2.metric("Next planned", (m.get("next_planned") or "—"))
+colH3.metric("Git sync", "✅ enabled" if GH_TOKEN else "—")
+
+# Controls
+with st.expander("Controls", expanded=True):
+    auto_tick = st.toggle("Enable auto scheduler tick (recommended)", value=True)
+    if st.button("🔁 Force manual update now"):
+        for g in GAMES:
+            df_new = pull_official(g, MN_SOURCES[g])
+            if not df_new.empty:
+                save_history(g, df_new)
+        st.success("Manual refresh complete.")
+        update_manifest(synced=bool(GH_TOKEN))
+
+# Auto tick on each refresh
+due = scheduler_tick(auto=auto_tick)
+if due:
+    st.success(f"Ran: {', '.join([f'{g}:{p}' for g,p,_ in due])}")
+
+# Live cards
+st.subheader("🎯 Live latest draws")
+cols = st.columns(3)
+for i,g in enumerate(GAMES):
+    with cols[i]:
+        dfh = load_history(g)
+        if not dfh.empty:
+            latest = dfh.iloc[0]
+            nums = [int(latest[f"n{k}"]) for k in range(1,6)]
+            st.success(f"{g}: {' '.join(map(str, nums))}  —  {latest['date'].strftime('%b %d, %Y')}")
         else:
             st.warning(f"{g}: fallback (no file yet)")
-    return results
 
-# ==========================================================
-# 🪄 Confidence / Prediction Section
-# ==========================================================
-def show_predictions(draw_data):
-    st.subheader("🔮 Adaptive Predictions")
-    for g, df in draw_data.items():
-        pred_df, conf = adaptive_simulation(df, g)
-        if not pred_df.empty:
-            st.info(f"{g}: {pred_df['predicted_set'].iloc[0]}  |  Confidence: {pred_df['confidence_%'].iloc[0]}%")
-        else:
-            st.warning(f"{g}: Not enough data for analysis yet.")
+st.divider()
 
-# ==========================================================
-# 🧭 Scheduler View
-# ==========================================================
-def show_schedule():
-    st.subheader("🗓️ Schedule (America/Chicago)")
-    st.markdown("""
-    **N5** — Daily  
-    - Post-draw analysis: 6:30 AM  
-    - Pre-draw analysis: 9:00 AM, 11:00 AM, 2:00 PM  
-    - Final draw & analysis: 3:30 PM  
+# Predictions + logs
+st.subheader("🔮 Adaptive predictions (with trickle-down)")
+seed = build_trickle_seed(load_history("N5"), window=20)
+for g in GAMES:
+    hist = load_history(g)
+    trickle = seed if g in ("G5","PB") else None
+    pick, conf = adaptive_simulation(hist, g, trickle)
+    if pick:
+        st.info(f"{g}: {pick}  |  {conf}%")
+        # log preview only (scheduler/phase already logs)
+    else:
+        st.caption(f"{g}: insufficient data yet.")
 
-    **G5** — Monday, Wednesday, Friday  
-    - Same times as N5  
+st.divider()
 
-    **Powerball** — Monday, Wednesday, Saturday  
-    - Same times as N5  
-    """)
+# Charts
+st.subheader("📈 Confidence trend")
+if CONF_PATH.exists():
+    cdf = pd.read_csv(CONF_PATH)
+    if not cdf.empty:
+        cdf["timestamp"]=pd.to_datetime(cdf["timestamp"])
+        cdf = cdf.sort_values("timestamp").tail(300)
+        st.line_chart(cdf.pivot(index="timestamp", columns="game", values="confidence"))
+    else:
+        st.caption("No confidence data yet.")
+else:
+    st.caption("No confidence data yet.")
 
-# ==========================================================
-# 🧩 Streamlit Layout
-# ==========================================================
-def main():
-    st.title("🌟 Northstar Ecosystem — Adaptive Scheduler v3")
-    st.caption("Adaptive MC + clustering • Trickle-down cross-influence • Live official pulls • Scheduled pre/post runs")
+st.subheader("🏁 Performance (Exact / ±1)")
+if PERF_PATH.exists():
+    pdf = pd.read_csv(PERF_PATH)
+    if not pdf.empty:
+        pdf["timestamp"]=pd.to_datetime(pdf["timestamp"])
+        st.dataframe(pdf.tail(50), use_container_width=True)
+    else:
+        st.caption("No performance entries yet.")
+else:
+    st.caption("No performance entries yet.")
 
-    with st.expander("Show controls", expanded=True):
-        selected_games = st.multiselect("Games", ["N5", "G5", "PB"], default=["N5", "G5", "PB"])
-        if st.button("▶️ Run selected phase now"):
-            st.session_state["draw_data"] = {g: fetch_draws(MN_SOURCES[g], g) for g in selected_games}
-            st.success("Live draw data fetched successfully!")
+st.divider()
 
-    st.divider()
-    draw_data = st.session_state.get("draw_data", display_latest_draws())
-    show_predictions(draw_data)
-    show_schedule()
+# Schedule view
+st.subheader("🗓️ Schedule (CST)")
+for g,cfg in SCHEDULE.items():
+    days_map = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]
+    days_txt = ", ".join(days_map[d] for d in sorted(cfg["days"]))
+    st.write(f"**{g}** — days: {days_txt} • post {cfg['post']} • pre {', '.join(cfg['pre'])} • final {cfg['final']}")
 
-# ==========================================================
-# 🚀 Run the Streamlit App
-# ==========================================================
-if __name__ == "__main__":
-    main()
+st.caption(f"Northstar v{APP_VER} • © 2025")
