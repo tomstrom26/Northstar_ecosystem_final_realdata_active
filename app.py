@@ -174,7 +174,7 @@ def pull_official(game: str, url: str) -> pd.DataFrame:
                     )
                     return df
                     
-                    # --- set up API URL and headers for full pull ---
+# --- set up API URL and headers for full pull ---
 api_urls = {
     "N5": "https://data.mn.gov/resource/3x3v-hdx5.json?$limit=5000&$order=draw_date%20DESC",
     "G5": "https://data.mn.gov/resource/bpww-ctz7.json?$limit=5000&$order=draw_date%20DESC",
