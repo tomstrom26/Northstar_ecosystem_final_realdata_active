@@ -451,7 +451,7 @@ with st.expander("Controls", expanded=True):
         st.info("Running full Northstar update… please wait ⏳")
         seed = build_trickle_seed(load_history("N5"), window=20)
 
-        for g in GAMES:
+for g in GAMES:
     st.subheader(f"Running phase for {g}...")
 
     # Step 1: pull official or fallback data
