@@ -215,7 +215,6 @@ def normalize_and_save_draws(game, data, filename):
         for draw in items:
             draw_date = draw.get("draw_date")
             numbers = draw.get("numbers") or draw.get("winning_numbers")
-
             if draw_date and numbers:
                 if isinstance(numbers, list):
                     numbers = ",".join(map(str, numbers))
@@ -247,7 +246,6 @@ def normalize_and_save_draws(game, data, filename):
         st.error(f"{game}: Failed to build or save data: {e}")
         st.warning(f"{game}: Check if data format or URL changed.")
         st.write("DEBUG — Incoming data sample:", data)
-        
         return None
         
         df_new = pd.DataFrame(draw_rows)
