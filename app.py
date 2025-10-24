@@ -127,40 +127,68 @@ def _cached_pull(url: str) -> str:
 # -----------------------------
 # Robust MN HTML parse
 # -----------------------------
-def pull_official(game:str, url:str) -> pd.DataFrame:
+def pull_official(game: str, url: str) -> pd.DataFrame:
     """
-    Returns DataFrame: date, n1..n5, (optional bonus), game
+    Pulls full historical data via MN Lottery JSON API when possible,
+    falling back to HTML scrape if the API is unavailable.
     """
     try:
+        # --- JSON endpoints for complete historical data ---
+        api_urls = {
+            "N5": "https://www.mnlottery.com/api/v2/draw-game-data/northstar-cash",
+            "G5": "https://www.mnlottery.com/api/v2/draw-game-data/gopher-5",
+            "PB": "https://www.mnlottery.com/api/v2/draw-game-data/powerball"
+        }
+        if game in api_urls:
+            r = requests.get(api_urls[game], timeout=25, headers={"User-Agent": "Mozilla/5.0"})
+            if r.status_code == 200:
+                data = r.json()
+                draws = data.get("draws", [])
+                if draws:
+                    rows = []
+                    for d in draws:
+                        if isinstance(d.get("winningNumbers"), list) and len(d["winningNumbers"]) >= 5:
+                            row = {
+                                "date": pd.to_datetime(d.get("drawDate")),
+                                "n1": int(d["winningNumbers"][0]),
+                                "n2": int(d["winningNumbers"][1]),
+                                "n3": int(d["winningNumbers"][2]),
+                                "n4": int(d["winningNumbers"][3]),
+                                "n5": int(d["winningNumbers"][4]),
+                                "game": game
+                            }
+                            rows.append(row)
+                    df = pd.DataFrame(rows)
+                    if not df.empty:
+                        df = df.dropna(subset=["date"]).drop_duplicates(subset=["date"]).sort_values("date", ascending=False)
+                        return df
+
+        # --- fallback: existing HTML parser ---
         html = _cached_pull(url)
         soup = BeautifulSoup(html, "html.parser")
         blocks = soup.select("li, article, div")
-
-        rows=[]
+        rows = []
         for b in blocks:
             txt = " ".join(b.get_text(" ", strip=True).split())
-            # date like "January 1, 2025"
             dm = re.search(r"(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},\s+\d{4}", txt)
             nums = re.findall(r"\b\d+\b", txt)
             if dm and len(nums) >= 5:
                 d = pd.to_datetime(dm.group(0), errors="coerce")
-                if pd.isna(d): continue
+                if pd.isna(d):
+                    continue
                 row = {"date": d}
                 for i in range(5):
                     row[f"n{i+1}"] = int(nums[i])
-                if len(nums)>=6: row["bonus"]=int(nums[5])
-                row["game"]=game
+                row["game"] = game
                 rows.append(row)
-
         df = pd.DataFrame(rows)
-        if df.empty:
-            return pd.DataFrame(columns=["date","n1","n2","n3","n4","n5","game"])
-        df = df.drop_duplicates(subset=["date","n1","n2","n3","n4","n5"])
-        df = df.sort_values("date", ascending=False).reset_index(drop=True)
+        if not df.empty:
+            df = df.drop_duplicates(subset=["date", "n1", "n2", "n3", "n4", "n5"]).sort_values("date", ascending=False)
         return df
+
     except Exception as e:
         log_line(f"pull_official error {game}: {e}")
-        return pd.DataFrame(columns=["date","n1","n2","n3","n4","n5","game"])
+        return pd.DataFrame(columns=["date", "n1", "n2", "n3", "n4", "n5", "game"])
 
 # -----------------------------
 # Persistence: histories / logs
@@ -402,13 +430,31 @@ colH3.metric("Git sync", "✅ enabled" if GH_TOKEN else "—")
 # Controls
 with st.expander("Controls", expanded=True):
     auto_tick = st.toggle("Enable auto scheduler tick (recommended)", value=True)
-    if st.button("🔁 Force manual update now"):
+
+    st.markdown("#### 🟢 Manual Control")
+    if st.button("🚀 Run System Now"):
+        _cached_pull.clear()  # force fresh data
+        st.info("Running full Northstar update… please wait ⏳")
+        seed = build_trickle_seed(load_history("N5"), window=20)
+
         for g in GAMES:
             df_new = pull_official(g, MN_SOURCES[g])
-            if not df_new.empty:
-                save_history(g, df_new)
-        st.success("Manual refresh complete.")
+            hist = save_history(g, df_new) if not df_new.empty else load_history(g)
+            trickle = seed if g in ("G5", "PB") else None
+            pick, conf = adaptive_simulation(hist, g, trickle)
+            if pick:
+                log_confidence(g, conf)
+                if not hist.empty:
+                    latest = hist.iloc[0]
+                    actual = [int(latest[f"n{k}"]) for k in range(1, 6)]
+                    score_performance(g, pick, actual)
+                st.success(f"{g}: {pick}  |  {conf}% confidence")
+            else:
+                st.warning(f"{g}: insufficient data.")
+
+        weekly_archive_if_needed()
         update_manifest(synced=bool(GH_TOKEN))
+        st.success(f"✅ System run complete — {now_ct().strftime('%I:%M %p %Z')}")
 
 # Auto tick on each refresh
 due = scheduler_tick(auto=auto_tick)
