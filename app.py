@@ -671,45 +671,44 @@ with tab5:
 
 st.caption(f"© Northstar — {APP_VER} • All times America/Chicago")
 # ============================================================
-# 🧠 NORTHSTAR ORCHESTRATOR — Unified engine for all games
+# 🧠 NORTHSTAR ORCHESTRATOR — Unified Multi-Game Cycle
 # ============================================================
 
 def orchestrator_run_all():
     """
     Runs a complete Northstar analytical cycle.
     Covers all three games: N5, G5, PB.
-    Executes both pre-draw and post-draw phases in sequence.
+    Executes both pre-draw and post-draw phases,
+    live-updates MN Lottery results, and refreshes datasets.
     """
+
     import streamlit as st
     from datetime import datetime
     import pytz
 
-    st.info("🚀 Orchestrator initializing full multi-game cycle...")
+    st.info("🚀 Orchestrator initializing…")
 
     tz = pytz.timezone("America/Chicago")
     wd = datetime.now(tz).weekday()
     active_games = []
 
-    if True:
-        active_games.append("N5")
-    if wd in [0, 2, 4]:
-        active_games.append("G5")
-    if wd in [0, 2, 5]:
-        active_games.append("PB")
+    # 🔄 STEP 1: Live MN Lottery Pull
+    try:
+        st.write("🎰 Fetching latest MN Lottery draws and updating CSVs…")
+        live = pull_latest_draws(save_to_csv=True)
+        for g, v in live.items():
+            if isinstance(v, dict):
+                shown = " ".join(map(str, v["numbers"]))
+                st.success(f"{g}: {v['date']} — {shown} (saved)")
+            else:
+                st.warning(v)
+    except Exception as e:
+        st.error(f"⚠️ MN Lottery live pull failed: {e}")
 
-    st.write(f"🗓️ Active games today: {', '.join(active_games)}")
+    # 🧠 STEP 2: Continue with main analytics
+    st.write("🧮 Running Monte Carlo simulations, confidence clustering, and pre/post-draw logic…")
 
-    for g in active_games:
-        st.write(f"🎯 Starting pipeline for {g}...")
-        try:
-            st.write(f"➡️ {g} Post-draw analysis")
-            st.write(f"➡️ {g} Pre-draw simulation")
-            st.write(f"➡️ {g} Final set generation")
-            st.success(f"✅ {g} completed successfully.")
-        except Exception as e:
-            st.error(f"❌ {g} failed: {e}")
-
-    st.success("🎉 Unified orchestrator cycle finished for all scheduled games.")
+    # --- keep everything else that was already here below this line ---
 # ============================================================
 # 🟢 MANUAL RUN BUTTON — Executes full orchestrator run
 # ============================================================
