@@ -639,7 +639,83 @@ if st.button("🚀 Run System Now"):
 # Footer caption (KEEP THIS)
 st.caption("Northstar Ecosystem v3.0 — Automated Prediction System")
 st.divider()
+# ============================================================
+# 🔁 Northstar Ecosystem Orchestrator (Full Auto Run)
+# ============================================================
 
+def orchestrator_run_all():
+    """
+    Runs a complete Northstar cycle:
+    1️⃣ Pulls latest data for N5, G5, and Powerball.
+    2️⃣ Updates and merges local history.
+    3️⃣ Builds trickle-down weighting (N5 → G5/PB).
+    4️⃣ Runs adaptive Monte Carlo simulations for each.
+    5️⃣ Logs confidence + performance and refreshes manifest.
+    """
+
+    st.info("🚀 Starting orchestrator full run...")
+    results = {}
+
+    # --------------------------------------------
+    # STEP 1. Pull or fallback for each game
+    # --------------------------------------------
+    for game in GAMES:
+        st.write(f"🎯 **{game}**: fetching history and building model...")
+        df_new = pull_official(game)
+        if df_new is None or df_new.empty:
+            st.warning(f"{game}: No new data, using existing history.")
+            df_hist = load_history(game)
+        else:
+            df_hist = save_history(game, df_new)
+
+        if df_hist is None or df_hist.empty:
+            st.error(f"{game}: could not load or save data.")
+            continue
+
+        # ----------------------------------------
+        # STEP 2. Build trickle influence
+        # ----------------------------------------
+        if game in ("G5", "PB"):
+            trickle_seed = build_trickle_seed(load_history("N5"), window=20)
+        else:
+            trickle_seed = None
+
+        # ----------------------------------------
+        # STEP 3. Monte Carlo adaptive simulation
+        # ----------------------------------------
+        picks, conf = adaptive_simulation(df_hist, game, trickle_seed)
+        if picks and len(picks) == 5:
+            results[game] = {"numbers": picks, "confidence": conf}
+            st.success(f"✅ {game} → {picks} ({conf:.2f}% confidence)")
+            log_confidence(game, conf)
+
+            # Score vs latest draw
+            try:
+                latest = df_hist.iloc[0]
+                actual = [int(latest[f"n{i}"]) for i in range(1, 6) if f"n{i}" in latest]
+                score_performance(game, picks, actual)
+            except Exception:
+                pass
+        else:
+            st.warning(f"{game}: Simulation did not yield valid results.")
+
+    # --------------------------------------------
+    # STEP 4. Update logs and manifest
+    # --------------------------------------------
+    weekly_archive_if_needed()
+    update_manifest(synced=bool(GH_TOKEN))
+
+    # --------------------------------------------
+    # STEP 5. Display results summary
+    # --------------------------------------------
+    if results:
+        st.divider()
+        st.subheader("🎯 Northstar Orchestrator Results Summary")
+        for game, data in results.items():
+            st.markdown(f"**{game}** → `{data['numbers']}` — {data['confidence']:.2f}% confidence")
+        st.success("🌟 Full Northstar cycle completed successfully!")
+    else:
+        st.error("⚠️ No results produced — check data sources or URLs.")
 # ============================================================
 # 🧩 DIAGNOSTICS TAB — FINAL VERSION
 # ============================================================
