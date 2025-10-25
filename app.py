@@ -717,6 +717,72 @@ def orchestrator_run_all():
     else:
         st.error("⚠️ No results produced — check data sources or URLs.")
 # ============================================================
+# ⏰ Daily 5 AM Orchestrator Helpers (CST)
+# ============================================================
+from datetime import timedelta
+
+def _manifest_get() -> dict:
+    try:
+        if MANIFEST.exists():
+            return json.loads(MANIFEST.read_text())
+    except Exception:
+        pass
+    return {}
+
+def _manifest_put(m: dict):
+    m["ver"] = APP_VER
+    MANIFEST.write_text(json.dumps(m, indent=2))
+
+def _today_cst_str() -> str:
+    return now().strftime("%Y-%m-%d")
+
+def _mark_today(key: str):
+    m = _manifest_get()
+    m[key] = _today_cst_str()
+    m[f"{key}_ts"] = now().isoformat()
+    _manifest_put(m)
+
+def _not_done_today(key: str) -> bool:
+    return _manifest_get().get(key) != _today_cst_str()
+
+def _in_window_cst(hh: int, mm: int = 0, slack_min: int = 30) -> bool:
+    # True if now within ±slack_min of hh:mm CST
+    now_ct = now()
+    t0 = now_ct.replace(hour=hh, minute=mm, second=0, microsecond=0)
+    return abs((now_ct - t0)) <= timedelta(minutes=slack_min)
+
+def ensure_daily_orchestrator_5am():
+    """
+    Run orchestrator once per day around 05:00 CST.
+    Safe & idempotent (checks manifest). Also includes a
+    first-open-of-day fallback (runs once if missed).
+    """
+    key = "orchestrator_5am"
+    # If not done today and we're in/near 05:00 → run it
+    if _not_done_today(key) and _in_window_cst(5, 0, slack_min=60):
+        st.info("⏰ Auto-run: 5 AM daily orchestrator window (CST)")
+        try:
+            orchestrator_run_all()
+            _mark_today(key)
+            st.success("✅ Daily orchestrator completed (5 AM window).")
+        except Exception as e:
+            st.error(f"⚠️ Daily orchestrator failed: {e}")
+
+def ensure_first_open_fallback():
+    """
+    If the 5 AM run was missed (app was asleep), run once on the
+    first page open of the day. Idempotent via manifest.
+    """
+    key = "orchestrator_5am"
+    if _not_done_today(key) and now().hour >= 5:
+        st.info("🕘 Fallback: first-open daily orchestrator (after 5 AM CST)")
+        try:
+            orchestrator_run_all()
+            _mark_today(key)
+            st.success("✅ Fallback orchestrator completed.")
+        except Exception as e:
+            st.error(f"⚠️ Fallback orchestrator failed: {e}")
+# ============================================================
 # 🧩 DIAGNOSTICS TAB — FINAL VERSION
 # ============================================================
 
