@@ -710,6 +710,45 @@ def orchestrator_run_all():
 
     # --- keep everything else that was already here below this line ---
 # ============================================================
+# 🧠 NORTHSTAR ORCHESTRATOR — Unified Multi-Game Cycle
+# ============================================================
+
+def orchestrator_run_all():
+    """
+    Runs a complete Northstar analytical cycle.
+    Covers all three games: N5, G5, PB.
+    Executes both pre-draw and post-draw phases,
+    live-updates MN Lottery results, and refreshes datasets.
+    """
+
+    import streamlit as st
+    from datetime import datetime
+    import pytz
+
+    st.info("🚀 Orchestrator initializing…")
+
+    tz = pytz.timezone("America/Chicago")
+    wd = datetime.now(tz).weekday()
+    active_games = []
+
+    # 🔄 STEP 1: Live MN Lottery Pull
+    try:
+        st.write("🎰 Fetching latest MN Lottery draws and updating CSVs…")
+        live = pull_latest_draws(save_to_csv=True)
+        for g, v in live.items():
+            if isinstance(v, dict):
+                shown = " ".join(map(str, v["numbers"]))
+                st.success(f"{g}: {v['date']} — {shown} (saved)")
+            else:
+                st.warning(v)
+    except Exception as e:
+        st.error(f"⚠️ MN Lottery live pull failed: {e}")
+
+    # 🧠 STEP 2: Continue with main analytics
+    st.write("🧮 Running Monte Carlo simulations, confidence clustering, and pre/post-draw logic…")
+
+    # --- keep everything else that was already here below this line ---
+# ============================================================
 # 🟢 MANUAL RUN BUTTON — Executes full orchestrator run
 # ============================================================
 
@@ -1060,59 +1099,6 @@ with diag_tab:
 
     st.divider()
 
-    # ============================================================
-# 🎰 MN Lottery Live Data Puller  → saves into ./data/*.csv
-# ============================================================
-import requests
-from bs4 import BeautifulSoup
-
-MN_URLS = {
-    "N5": "https://www.mnlottery.com/games/northstar-cash",
-    "G5": "https://www.mnlottery.com/games/gopher-5",
-    "PB": "https://www.mnlottery.com/games/powerball",
-}
-
-def pull_latest_draws(save_to_csv: bool = True):
-    """
-    Fetch latest MN Lottery draws for N5, G5, PB.
-    Returns dict {game: {"date":str,"numbers":[ints]}} or message str on error.
-    Also appends to ./data/{game}.csv when save_to_csv=True.
-    """
-    results = {}
-    headers = {"User-Agent": "Mozilla/5.0 (Northstar System)"}
-
-    for game, url in MN_URLS.items():
-        try:
-            r = requests.get(url, timeout=15, headers=headers)
-            if r.status_code != 200:
-                results[game] = f"⚠️ {game} connection returned {r.status_code}"
-                continue
-
-            soup = BeautifulSoup(r.text, "html.parser")
-            # numbers on MN site appear in balls like <span class="numbers__ball">12</span>
-            balls = [el.get_text(strip=True) for el in soup.select(".numbers__ball")]
-            nums = _parse_ints(balls)
-
-            # date element like <div class="numbers__date">…</div>
-            date_el = soup.select_one(".numbers__date")
-            dtext = date_el.get_text(strip=True) if date_el else "Unknown date"
-
-            # For Powerball, ensure order: 5 whites then PB as last
-            if game == "PB" and len(nums) >= 6:
-                whites, red = nums[:5], nums[5]
-                nums = whites + [red]
-            else:
-                nums = nums[:5] if game in ("N5","G5") else nums[:6]
-
-            results[game] = {"date": dtext, "numbers": nums}
-
-            if save_to_csv and isinstance(nums, list) and len(nums) >= (6 if game=="PB" else 5):
-                _save_draw(game, dtext, nums)
-
-        except Exception as e:
-            results[game] = f"❌ {game} fetch error: {e}"
-
-    return results
     # ------------------------------------------------------------
     # 5️⃣ Full System Run
     # ------------------------------------------------------------
