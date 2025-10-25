@@ -648,6 +648,84 @@ if st.button("🚀 Run System Now"):
     except Exception as e:
         st.error(f"❌ Orchestrator error: {e}")
 # ============================================================
+# 🧠 NORTHSTAR ORCHESTRATOR — Unified engine for all games
+# ============================================================
+
+def orchestrator_run_all():
+    """
+    Runs a complete Northstar analytical cycle.
+    Covers all three games: N5, G5, PB.
+    Executes both pre-draw and post-draw phases in sequence.
+    """
+
+    st.info("🚀 Orchestrator initializing full multi-game cycle...")
+
+    # --- Define which games are active today ---
+    from datetime import datetime
+    import pytz
+    tz = pytz.timezone("America/Chicago")
+    wd = datetime.now(tz).weekday()
+    active_games = []
+
+    if True:  # N5 runs daily
+        active_games.append("N5")
+    if wd in [0, 2, 4]:  # Mon, Wed, Fri
+        active_games.append("G5")
+    if wd in [0, 2, 5]:  # Mon, Wed, Sat
+        active_games.append("PB")
+
+    st.write(f"🗓️ Active games today: {', '.join(active_games)}")
+
+    # --- Simulate full run for each game ---
+    for g in active_games:
+        st.write(f"🎯 Starting pipeline for {g}...")
+
+        try:
+            # POST-DRAW
+            fn_post = globals().get(f"{g.lower()}_postdraw")
+            if callable(fn_post):
+                fn_post()
+                st.success(f"✅ {g} Post-draw complete.")
+            else:
+                st.info(f"ℹ️ {g} Post-draw handler not found — skipping.")
+
+            # PRE-DRAW
+            fn_pre = globals().get(f"{g.lower()}_predraw")
+            if callable(fn_pre):
+                fn_pre()
+                st.success(f"✅ {g} Pre-draw complete.")
+            else:
+                st.info(f"ℹ️ {g} Pre-draw handler not found — skipping.")
+
+            # SIMULATION (fast)
+            fn_sim = globals().get(f"{g.lower()}_predraw_sim_fast")
+            if callable(fn_sim):
+                fn_sim()
+                st.success(f"✅ {g} Simulation fast phase complete.")
+            else:
+                st.info(f"ℹ️ {g} Simulation fast handler missing — skipping.")
+
+            # FULL ANALYSIS
+            fn_full = globals().get(f"{g.lower()}_predraw_full")
+            if callable(fn_full):
+                fn_full()
+                st.success(f"✅ {g} Full pre-draw analysis complete.")
+            else:
+                st.info(f"ℹ️ {g} Full pre-draw handler missing — skipping.")
+
+            # FINAL SETS
+            fn_final = globals().get(f"{g.lower()}_final_sets")
+            if callable(fn_final):
+                fn_final()
+                st.success(f"✅ {g} Final draw & set generation complete.")
+            else:
+                st.info(f"ℹ️ {g} Final set handler missing — skipping.")
+
+        except Exception as e:
+            st.error(f"❌ {g} Orchestrator error: {e}")
+
+    st.success("🎉 Unified orchestrator cycle finished for all scheduled games.")
+# ============================================================
 # 🔁 Northstar Ecosystem Orchestrator (Full Auto Run)
 # ============================================================
 
