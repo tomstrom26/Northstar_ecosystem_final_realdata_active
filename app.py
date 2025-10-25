@@ -1061,30 +1061,59 @@ with diag_tab:
 
     st.divider()
 
-    # ------------------------------------------------------------
-    # 4️⃣ MN Lottery Data Pull Test
-    # ------------------------------------------------------------
-    st.markdown("### 4) MN Lottery Pull Test")
-    st.caption("Attempts to fetch the latest live draw data from the MN Lottery website.")
-    if st.button("🎰 Test MN Lottery Live Pull", key="btn_live_pull"):
+    # ============================================================
+# 🎰 MN Lottery Live Data Puller  → saves into ./data/*.csv
+# ============================================================
+import requests
+from bs4 import BeautifulSoup
+
+MN_URLS = {
+    "N5": "https://www.mnlottery.com/games/northstar-cash",
+    "G5": "https://www.mnlottery.com/games/gopher-5",
+    "PB": "https://www.mnlottery.com/games/powerball",
+}
+
+def pull_latest_draws(save_to_csv: bool = True):
+    """
+    Fetch latest MN Lottery draws for N5, G5, PB.
+    Returns dict {game: {"date":str,"numbers":[ints]}} or message str on error.
+    Also appends to ./data/{game}.csv when save_to_csv=True.
+    """
+    results = {}
+    headers = {"User-Agent": "Mozilla/5.0 (Northstar System)"}
+
+    for game, url in MN_URLS.items():
         try:
-            import requests
-            urls = {
-                "N5": "https://www.mnlottery.com/games/northstar-cash",
-                "G5": "https://www.mnlottery.com/games/gopher-5",
-                "PB": "https://www.mnlottery.com/games/powerball",
-            }
-            for k, v in urls.items():
-                res = requests.get(v, timeout=10)
-                if res.status_code == 200:
-                    st.success(f"✅ {k} connection successful ({len(res.text)} bytes).")
-                else:
-                    st.warning(f"⚠️ {k} connection returned {res.status_code}.")
+            r = requests.get(url, timeout=15, headers=headers)
+            if r.status_code != 200:
+                results[game] = f"⚠️ {game} connection returned {r.status_code}"
+                continue
+
+            soup = BeautifulSoup(r.text, "html.parser")
+            # numbers on MN site appear in balls like <span class="numbers__ball">12</span>
+            balls = [el.get_text(strip=True) for el in soup.select(".numbers__ball")]
+            nums = _parse_ints(balls)
+
+            # date element like <div class="numbers__date">…</div>
+            date_el = soup.select_one(".numbers__date")
+            dtext = date_el.get_text(strip=True) if date_el else "Unknown date"
+
+            # For Powerball, ensure order: 5 whites then PB as last
+            if game == "PB" and len(nums) >= 6:
+                whites, red = nums[:5], nums[5]
+                nums = whites + [red]
+            else:
+                nums = nums[:5] if game in ("N5","G5") else nums[:6]
+
+            results[game] = {"date": dtext, "numbers": nums}
+
+            if save_to_csv and isinstance(nums, list) and len(nums) >= (6 if game=="PB" else 5):
+                _save_draw(game, dtext, nums)
+
         except Exception as e:
-            st.error(f"❌ Live pull failed: {e}")
+            results[game] = f"❌ {game} fetch error: {e}"
 
-    st.divider()
-
+    return results
     # ------------------------------------------------------------
     # 5️⃣ Full System Run
     # ------------------------------------------------------------
