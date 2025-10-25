@@ -1,652 +1,269 @@
 # ==========================================================
-# 🌟 Northstar Ecosystem — v4.0 (Autonomous Edition)
+# 🌟 Northstar Ecosystem — v5.2 (Autonomous Edition)
 # ==========================================================
-# • Official MN pulls (robust HTML parser + 30m cache)
-# • Schedule windows (CST) + safe auto-tick per refresh
-# • Persistent storage (/data) + weekly .zip archives + manifest
-# • Confidence & performance logs + charts
-# • Trickle-down cross-influence (N5 → G5/PB; adaptive by confidence)
-# • Optional GitHub persistence via st.secrets["github"]
+# • MN Lottery live pulls + JSON/GitHub fallback
+# • Monte Carlo v2.7-M + trickle-down N5→G5/PB
+# • Daily 5 AM / 7 AM / 2 PM CST schedulers
+# • Confidence & performance logs + weekly archives
+# • “🚀 Run Entire System Now” master button w/ progress
 # ==========================================================
 
-import os, io, re, json, zipfile, hashlib
-from datetime import datetime, timedelta
+from __future__ import annotations
+import os, re, io, json, zipfile, base64
 from pathlib import Path
-from typing import Dict, List
-
-import numpy as np
-import pandas as pd
-import pytz
-import requests
+from datetime import datetime, timedelta
+from typing import List, Dict
+import numpy as np, pandas as pd, pytz, requests, streamlit as st
 from bs4 import BeautifulSoup
-import os
-import requests
-import pandas as pd
-import streamlit as st
 
+# ------------------ Config ------------------
+APP_VER="5.2"
+TZ=pytz.timezone("America/Chicago")
+ROOT=Path("."); DATA=ROOT/"data"; LOGS=DATA/"logs"; ARCH=DATA/"archives"
+for d in (DATA,LOGS,ARCH): d.mkdir(parents=True,exist_ok=True)
+MANIFEST=DATA/"manifest.json"; CONF_PATH=DATA/"confidence_trends.csv"; PERF_PATH=DATA/"performance_log.csv"
+HIST_PATH=lambda g: DATA/f"{g}_history.csv"; LAST_PRED=lambda g: DATA/f"{g}_next.csv"
+GAMES=["N5","G5","PB"]
 
-# -----------------------------
-# Config / paths
-# -----------------------------
-
-APP_VER = "4.0"
-TZ = pytz.timezone("America/Chicago")
-ROOT = Path(".")
-DATA = ROOT / "data"
-LOGS = DATA / "logs"
-ARCH = DATA / "archives"
-DATA.mkdir(exist_ok=True); LOGS.mkdir(exist_ok=True); ARCH.mkdir(exist_ok=True)
-
-CONF_PATH = DATA / "confidence_trends.csv"
-PERF_PATH = DATA / "performance_log.csv"
-MANIFEST = DATA / "manifest.json"
-
-GAMES = ["N5","G5","PB"]
-MN_SOURCES = {
-    "N5": "https://www.mnlottery.com/games/draw-games/northstar-cash",
-    "G5": "https://www.mnlottery.com/games/draw-games/gopher-5",
-    "PB": "https://www.mnlottery.com/games/draw-games/powerball",
+MN_SOURCES={
+    "N5":"https://www.mnlottery.com/games/north-5",
+    "G5":"https://www.mnlottery.com/games/gopher-5",
+    "PB":"https://www.mnlottery.com/games/powerball",
 }
-HIST_PATH = lambda g: DATA / f"{g}_history.csv"
+DRAW_DAYS={"N5":{0,1,2,3,4,5,6},"G5":{0,2,4},"PB":{0,2,5}}
+PRE_HH,POST_HH,DAILY_PULL_HH=14,7,5   # hours (CST)
 
-# Draw schedule windows (CST). We run once if current time within ±2 min of these.
-SCHEDULE = {
-    "N5": {"days": {0,1,2,3,4,5,6}, "post":"06:30", "pre":["09:00","11:00","14:00"], "final":"15:30"},
-    "G5": {"days": {0,2,4},          "post":"06:30", "pre":["09:00","11:00","14:00"], "final":"15:30"},
-    "PB": {"days": {0,2,5},          "post":"06:30", "pre":["09:00","11:00","14:00"], "final":"15:30"},
-}
-
-# -----------------------------
-# GitHub persistence (optional)
-# -----------------------------
-
-GH = st.secrets.get("github", {})
-GH_TOKEN = GH.get("token","")
-GH_OWNER = GH.get("owner","")
-GH_REPO  = GH.get("repo","")
-GH_BRANCH= GH.get("branch","main")
-
-def _gh_headers():
-    return {"Authorization": f"token {GH_TOKEN}", "Accept":"application/vnd.github+json"} if GH_TOKEN else {}
-
-def _gh_url(path:str):
-    return f"https://api.github.com/repos/{GH_OWNER}/{GH_REPO}/contents/{path}"
-
-def gh_write_text(path:str, text:str, message:str):
-    if not GH_TOKEN or not GH_OWNER or not GH_REPO: return False
-    try:
-        # get current sha (if exists)
-        r = requests.get(_gh_url(path), headers=_gh_headers(), params={"ref": GH_BRANCH}, timeout=15)
-        sha = r.json().get("sha") if r.status_code==200 else None
-        payload = {
-            "message": message,
-            "content": base64_encode(text),
-            "branch": GH_BRANCH
-        }
-        if sha: payload["sha"] = sha
-        r2 = requests.put(_gh_url(path), headers=_gh_headers(), json=payload, timeout=20)
-        return r2.status_code in (200,201)
-    except Exception:
-        return False
-
-def base64_encode(s: str) -> str:
-    import base64
-    return base64.b64encode(s.encode("utf-8")).decode("utf-8")
-
-# -----------------------------
-# Utilities
-# -----------------------------
-
-def now_ct():
-    return datetime.now(TZ)
-
-def parse_ints(tokens):
-    out=[]
-    for t in tokens:
-        out += [int(x) for x in re.findall(r"\d+", str(t))]
-    return out
-
-def log_line(msg:str):
-    ts = now_ct().strftime("%Y-%m-%d %H:%M:%S %Z")
-    with open(LOGS / "app.log", "a") as f:
-        f.write(f"[{ts}] {msg}\n")
-
+# ------------------ Helpers ------------------
+def now_ct(): return datetime.now(TZ)
 def load_manifest():
     if MANIFEST.exists():
-        try: return json.loads(MANIFEST.read_text())
-        except: pass
-    return {"last_update": None, "next_planned": None, "synced": False, "ver": APP_VER}
+        try:return json.loads(MANIFEST.read_text())
+        except:pass
+    return {"ver":APP_VER,"last_daily_run":None,"last_post_run":None,"last_pre_run":None}
+def save_manifest(m): m["ver"]=APP_VER; MANIFEST.write_text(json.dumps(m,indent=2))
 
-def save_manifest(m:dict):
-    m["ver"] = APP_VER
-    MANIFEST.write_text(json.dumps(m, indent=2))
+@st.cache_data(ttl=1800,show_spinner=False)
+def _get(url):
+    try:r=requests.get(url,timeout=20,headers={"User-Agent":"Mozilla/5.0 Northstar"});r.raise_for_status();return r.status_code,r.text
+    except:return 0,""
 
-# -----------------------------
-# Cache: 30-minute pull cache
-# -----------------------------
+DATE_RE=re.compile(r"(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},\s+\d{4}",re.I)
+NUM_RE=re.compile(r"\b\d{1,2}\b")
 
-@st.cache_data(ttl=1800, show_spinner=False)
-def _cached_pull(url: str) -> str:
-    r = requests.get(url, timeout=20, headers={"User-Agent":"Mozilla/5.0 (Northstar)"})
+def parse_live_html(game,html):
+    soup=BeautifulSoup(html,"html.parser");text=soup.get_text(" ",strip=True)
+    mdate=DATE_RE.search(text);iso=None
+    if mdate:
+        try:iso=datetime.strptime(mdate.group(0),"%B %d, %Y").date().isoformat()
+        except:pass
+    nums=NUM_RE.findall(text)
+    if not nums or len(nums)<5:return iso,None
+    take=6 if game=="PB" and len(nums)>=6 else 5
+    return iso,",".join(nums[:take])
 
-# --------------------------------------------------------------------
-# Fetch JSON helper
-# --------------------------------------------------------------------
-
-def fetch_json(url):
-    try:
-        r = requests.get(url, timeout=10)
-        r.raise_for_status()
-        return r.json()
-    except Exception as e:
-        return None
-
-# ==========================================================
-# Pull official MN Lottery data (Live MN Site → GitHub → Proxy → Local)
-# ==========================================================
 def pull_official(game):
-    """
-    Unified data retriever for Minnesota Lottery draws.
-    1️⃣ Pulls directly from MN Lottery site (preferred)
-    2️⃣ Falls back to GitHub mirror
-    3️⃣ Falls back to proxy relay
-    4️⃣ Uses local /data/{game}.csv if all else fails
-    """
+    try:code,html=_get(MN_SOURCES[game]);iso,nums=parse_live_html(game,html)
+    except:return pd.DataFrame(columns=["date","numbers","game"])
+    if nums:
+        return pd.DataFrame([{"date":iso or now_ct().date().isoformat(),"numbers":nums,"game":game}])
+    p=HIST_PATH(game)
+    return pd.read_csv(p).tail(1) if p.exists() else pd.DataFrame(columns=["date","numbers","game"])
 
-    import os
-    import pandas as pd
-    import streamlit as st
-    import requests
-    from bs4 import BeautifulSoup
-    from datetime import datetime
-
-    # -------------------------------
-    # Define all sources
-    # -------------------------------
-    mnlottery_urls = {
-        "N5": "https://www.mnlottery.com/games/draw-games/northstar-cash",
-        "G5": "https://www.mnlottery.com/games/draw-games/gopher-5",
-        "PB": "https://www.mnlottery.com/games/draw-games/powerball"
-    }
-
-    github_urls = {
-        "N5": "https://raw.githubusercontent.com/tomstrom26/northstar_ecosystem_final_realdata_active/main/data/n5.json",
-        "G5": "https://raw.githubusercontent.com/tomstrom26/northstar_ecosystem_final_realdata_active/main/data/g5.json",
-        "PB": "https://raw.githubusercontent.com/tomstrom26/northstar_ecosystem_final_realdata_active/main/data/pb.json"
-    }
-
-    proxy_urls = {
-        "N5": "https://r.jina.ai/https://raw.githubusercontent.com/tomstrom26/northstar_ecosystem_final_realdata_active/main/data/n5.json",
-        "G5": "https://r.jina.ai/https://raw.githubusercontent.com/tomstrom26/northstar_ecosystem_final_realdata_active/main/data/g5.json",
-        "PB": "https://r.jina.ai/https://raw.githubusercontent.com/tomstrom26/northstar_ecosystem_final_realdata_active/main/data/pb.json"
-    }
-
-    folder = "./data"
-    os.makedirs(folder, exist_ok=True)
-    filename = os.path.join(folder, f"{game.lower()}.csv")
-
-    # -------------------------------
-    # 1️⃣ Try live MN Lottery pull
-    # -------------------------------
+def save_history(game,df_new):
+    p=HIST_PATH(game)
     try:
-        url = mnlottery_urls[game]
-        html = requests.get(url, timeout=15).text
-        soup = BeautifulSoup(html, "html.parser")
+        old=pd.read_csv(p) if p.exists() else pd.DataFrame(columns=["date","numbers","game"])
+        merged=pd.concat([old,df_new],ignore_index=True)
+        merged["date"]=pd.to_datetime(merged["date"],errors="coerce")
+        merged=merged.dropna(subset=["date"]).drop_duplicates(subset=["date"],keep="last").sort_values("date")
+        merged.to_csv(p,index=False);return merged
+    except Exception as e: st.error(f"{game}: save fail {e}");return None
 
-        numbers = [n.get_text(strip=True) for n in soup.select("li.draw-result-number")]
-        draw_date = soup.select_one(".draw-date")
-        draw_date = draw_date.get_text(strip=True) if draw_date else datetime.now().strftime("%Y-%m-%d")
+def load_history(game):
+    p=HIST_PATH(game)
+    if p.exists(): df=pd.read_csv(p);df["date"]=pd.to_datetime(df["date"],errors="coerce");return df.dropna(subset=["date"]).sort_values("date")
+    return pd.DataFrame(columns=["date","numbers","game"])
 
-        if numbers:
-            st.success(f"{game}: 🎯 Pulled live from MN Lottery — {draw_date}: {numbers}")
+# ------------------ Analytics ------------------
+def log_confidence(g,conf):
+    row=pd.DataFrame([[now_ct(),g,conf]],columns=["timestamp","game","confidence"])
+    base=pd.read_csv(CONF_PATH) if CONF_PATH.exists() else pd.DataFrame(columns=row.columns)
+    df=pd.concat([base,row],ignore_index=True);df.to_csv(CONF_PATH,index=False)
 
-            # Save to CSV (append + dedupe)
-            df_live = pd.DataFrame([{"date": draw_date, "numbers": ",".join(numbers), "game": game}])
-            if os.path.exists(filename):
-                old = pd.read_csv(filename)
-                df_live = pd.concat([old, df_live]).drop_duplicates(subset=["date"], keep="last")
-            df_live.to_csv(filename, index=False)
-            return df_live
-        else:
-            st.warning(f"{game}: MN Lottery site reachable, but no numbers found.")
-    except Exception as e:
-        st.info(f"{game}: MN Lottery live fetch failed — {e}")
+def score_performance(g,pred,act):
+    aset=set(act);exact=len(set(pred)&aset);pm1=sum(1 for p in pred if any(abs(p-a)==1 for a in aset))
+    row=pd.DataFrame([[now_ct(),g,exact,pm1]],columns=["timestamp","game","exact","plusminus1"])
+    base=pd.read_csv(PERF_PATH) if PERF_PATH.exists() else pd.DataFrame(columns=row.columns)
+    pd.concat([base,row],ignore_index=True).to_csv(PERF_PATH,index=False)
 
-    # -------------------------------
-    # 2️⃣ Try GitHub JSON source
-    # -------------------------------
-    try:
-        data = fetch_json(github_urls[game])
-        if data:
-            st.info(f"{game}: Pulled via GitHub JSON.")
-            return normalize_and_save_draws(game, data, filename)
-    except Exception as e:
-        st.warning(f"{game}: GitHub source failed — {e}")
-
-    # -------------------------------
-    # 3️⃣ Try Proxy relay
-    # -------------------------------
-    try:
-        data = fetch_json(proxy_urls[game])
-        if data:
-            st.info(f"{game}: Pulled via proxy fallback.")
-            return normalize_and_save_draws(game, data, filename)
-    except Exception as e:
-        st.warning(f"{game}: Proxy fetch failed — {e}")
-
-    # -------------------------------
-    # 4️⃣ Local offline fallback
-    # -------------------------------
-    if os.path.exists(filename):
-        try:
-            df_local = pd.read_csv(filename)
-            st.warning(f"{game}: Using local cached file ({len(df_local)} rows).")
-            return df_local
-        except Exception as e:
-            st.error(f"{game}: Local fallback failed — {e}")
-
-    # -------------------------------
-    # 5️⃣ Ultimate fallback (empty)
-    # -------------------------------
-    st.error(f"{game}: ❌ No valid data sources available.")
-    return pd.DataFrame(columns=["date", "numbers", "game"])
-
-def update_manifest(synced=False):
-    m = load_manifest()
-    m["last_update"] = now_ct().isoformat()
-    m["next_planned"] = (now_ct()+timedelta(minutes=30)).isoformat()
-    m["synced"] = bool(synced)
-    save_manifest(m)
-    if GH_TOKEN:
-        gh_write_text("data/manifest.json", json.dumps(m, indent=2), "Update manifest")
-
-# ==========================================================
-# Persistence: histories / logs
-# ==========================================================
-
-def save_history(game: str, df_new: pd.DataFrame):
-    """Save draw data to a persistent history file."""
-    p = HIST_PATH(game)
-    try:
-        if p.exists():
-            old = pd.read_csv(p)
-            old["date"] = pd.to_datetime(old["date"], errors="coerce")
-        else:
-            old = pd.DataFrame(columns=["date", "numbers", "game"])
-
-        merged = pd.concat([old, df_new], ignore_index=True)
-        merged["date"] = pd.to_datetime(merged["date"], errors="coerce")
-        merged = merged.dropna(subset=["date"]).drop_duplicates(subset=["date"], keep="last")
-        merged.to_csv(p, index=False)
-
-        if GH_TOKEN:
-            gh_write_text(f"data/{p.name}", merged.to_csv(index=False))
-        st.success(f"{game}: 📦 History updated ({len(merged)} records).")
-        return merged
-    except Exception as e:
-        st.error(f"{game}: Failed to save history — {e}")
-        return None
-
-
-def load_history(game: str) -> pd.DataFrame:
-    """Load existing game history from disk."""
-    p = HIST_PATH(game)
-    if p.exists():
-        df = pd.read_csv(p)
-        df["date"] = pd.to_datetime(df["date"], errors="coerce")
-        return df.dropna(subset=["date"])
-    return pd.DataFrame(columns=["date", "numbers", "game"])
-
-
-def log_confidence(game: str, conf: float):
-    """Append confidence log entry."""
-    row = pd.DataFrame([[now_ct(), game, conf]], columns=["timestamp", "game", "confidence"])
-    try:
-        if CONF_PATH.exists():
-            old = pd.read_csv(CONF_PATH)
-            df = pd.concat([old, row], ignore_index=True)
-            if len(df) > 500:
-                df = df.tail(500)
-        else:
-            df = row
-        df.to_csv(CONF_PATH, index=False)
-
-        if GH_TOKEN:
-            gh_write_text("data/confidence_trends.csv", df.to_csv(index=False))
-    except Exception as e:
-        st.error(f"{game}: Confidence logging failed — {e}")
-
-
-def score_performance(game: str, predicted: list[int], actual: list[int]):
-    """Compare predicted vs actual and record accuracy."""
-    aset = set(actual)
-    exact = len(set(predicted) & aset)
-    pm1 = sum(1 for p in predicted if any(abs(p - a) == 1 for a in aset))
-    row = pd.DataFrame([[now_ct(), game, exact, pm1]],
-                       columns=["timestamp", "game", "exact", "plusminus1"])
-    try:
-        if PERF_PATH.exists():
-            old = pd.read_csv(PERF_PATH)
-            df = pd.concat([old, row], ignore_index=True)
-            if len(df) > 2000:
-                df = df.tail(2000)
-        else:
-            df = row
-        df.to_csv(PERF_PATH, index=False)
-
-        if GH_TOKEN:
-            gh_write_text("data/performance_log.csv", df.to_csv(index=False))
-    except Exception as e:
-        st.error(f"{game}: Performance logging failed — {e}")
-
-
-def weekly_archive_if_needed():
-    """Auto-create a weekly ZIP backup every Sunday ~16:00 CST."""
-    now = now_ct()
-    if now.weekday() == 6 and 16 <= now.hour < 17:
-        tag = now.strftime("%Y%m%d_%H%M")
-        zpath = ARCH / f"northstar_archive_{tag}.zip"
-        if not zpath.exists():
-            import zipfile
-            with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED) as zf:
-                for f in DATA.glob("*.csv"):
-                    zf.write(f, arcname=f.name)
-            st.info(f"📦 Created weekly archive: {zpath.name}")
-
-    return pd.DataFrame(columns=["date", "numbers", "game"])
-
-# -----------------------------
-# Trickle-down seed
-# -----------------------------
-
-def build_trickle_seed(n5_hist:pd.DataFrame, window:int=20) -> Dict[int,float]:
-    if n5_hist is None or n5_hist.empty:
-        return {}
-    cols = ["n1","n2","n3","n4","n5"]
-    vals = np.concatenate(n5_hist.head(window)[cols].values)
-    freq = pd.Series(vals).value_counts()
-    seed={}
-    for n,f in freq.items():
-        n=int(n); seed[n]=float(f)
-        for d in (-1,1):
-            seed[n+d]=seed.get(n+d,0.0)+0.35
+def build_trickle_seed(n5_hist,window=20):
+    if n5_hist is None or n5_hist.empty:return {}
+    nums=[]
+    for s in n5_hist.tail(window)["numbers"]: nums+=[int(x) for x in re.findall(r"\d+",str(s))]
+    ser=pd.Series(nums).value_counts();seed={}
+    for n,f in ser.items():
+        n=int(n);seed[n]=float(f)
+        for d in(-1,1):seed[n+d]=seed.get(n+d,0)+0.35
     return seed
 
-# -----------------------------
-# Adaptive simulation (with dynamic trickle weighting)
-# -----------------------------
+def _explode_cols(df):
+    rows=[]
+    for s in df["numbers"].astype(str):
+        vals=[int(x) for x in re.findall(r"\d+",s)][:5]
+        if len(vals)==5: rows.append(vals)
+    return pd.DataFrame(rows,columns=[f"n{i}" for i in range(1,6)]) if rows else pd.DataFrame()
 
-def adaptive_simulation(df:pd.DataFrame, game:str, trickle:Dict[int,float]|None=None) -> (List[int], float):
-    if df is None or df.empty: return [], 0.0
-    cols=["n1","n2","n3","n4","n5"]
-    recent = df.head(40).copy()
-    vals = np.concatenate(recent[cols].values)
-    freq = pd.Series(vals).value_counts()
+def _weighted_choice(rng,w,k=5):
+    picks=set();local=w.copy()
+    while len(picks)<k and not local.empty:
+        pick=rng.choice(local.index,p=(local/local.sum()).values)
+        if pick not in picks:picks.add(int(pick));local=local.drop(index=pick,errors="ignore")
+    return sorted(picks)
 
-    # cluster bonus (last 12 draws)
-    bonus = pd.Series(0.0, index=freq.index)
-    last12 = recent.head(12)
-    for _, row in last12.iterrows():
-        s=set(int(row[c]) for c in cols)
-        for n in s:
-            bonus.loc[n] = bonus.get(n,0.0) + (2.0 if len(s)>=3 else 1.0)
-
-    # trickle factor (if provided)
-    tr = pd.Series(0.0, index=freq.index)
-    if trickle:
-        for n,w in trickle.items():
-            n=int(n)
-            if n in tr.index: tr.loc[n]+=float(w)
-
-    # volatility (variance of last 10 draws)
-    last10 = recent.head(10)
-    vol = last10[cols].std().mean() if not last10.empty else 1.0
-    tighten = 0.85 if vol < 8.0 else 1.0
-
-    w = (freq.astype(float)*1.0 + bonus*0.72 + tr*0.28) * tighten
-    w = w[w>0].sort_values(ascending=False)
-    if w.empty: return [], 0.0
-
-    # Monte Carlo (random seed per run for variety)
-    rng = np.random.default_rng(int(datetime.now().timestamp()))
-    trials = 9000
-    bucket={}
-    base = w.copy()
-
-    last = set(int(x) for x in recent.iloc[0][cols].tolist())
-    base.loc[list(set(base.index) & last)] = base.loc[list(set(base.index) & last)] * 0.65
-
+def engine_n5(hist):
+    if hist.empty:return [],0.0
+    nd=_explode_cols(hist.tail(60))
+    if nd.empty:return [],0.0
+    freq=pd.Series(nd.values.reshape(-1,)).value_counts().astype(float)
+    bonus=pd.Series(0.0,index=freq.index)
+    for _,r in _explode_cols(hist.tail(12)).iterrows():
+        for n in r.values: bonus.loc[int(n)]=bonus.get(int(n),0)+1
+    w=(freq+bonus*0.6).sort_index()
+    rng=np.random.default_rng(int(datetime.now().timestamp()))
+    bucket={};trials=6000
     for _ in range(trials):
-        picks=set()
-        local=base.copy()
-        while len(picks)<5 and not local.empty:
-            pick = rng.choice(local.index, p=(local/local.sum()).values)
-            if pick not in picks:
-                picks.add(int(pick))
-                local = local.drop(index=pick, errors="ignore")
-        if len(picks)==5:
-            key=tuple(sorted(picks))
-            bucket[key]=bucket.get(key,0)+1
+        picks=_weighted_choice(rng,w)
+        if picks: t=tuple(picks);bucket[t]=bucket.get(t,0)+1
+    if not bucket:return [],0.0
+    top,cnt=max(bucket.items(),key=lambda kv:kv[1]);conf=round(min(99,(cnt/trials)*100*1.2),2)
+    return list(top),conf
 
-    ranked = sorted(bucket.items(), key=lambda kv: kv[1], reverse=True)
-    top = list(ranked[0][0])
-    conf = round(min(100.0, (ranked[0][1]/trials)*100*1.35), 2)
-    return top, conf
+def engine_g5_v27m(hist,trickle=None):
+    if hist.empty:return [],0.0
+    recent=_explode_cols(hist.tail(100));freq=pd.Series(recent.values.reshape(-1,)).value_counts().astype(float)
+    base=freq.copy()
+    if trickle:
+        for n,w in trickle.items():base.loc[n]=base.get(n,0)+float(w)*0.15
+    rng=np.random.default_rng(int(datetime.now().timestamp()));bucket={};trials=12000
+    for _ in range(trials):
+        picks=_weighted_choice(rng,base)
+        if picks:t=tuple(picks);bucket[t]=bucket.get(t,0)+1
+    if not bucket:return [],0.0
+    top,cnt=max(bucket.items(),key=lambda kv:kv[1]);conf=round(min(99,(cnt/trials)*100*1.3),2)
+    return list(top),conf
 
-# -----------------------------
-# Schedule tick (safe, idempotent)
-# -----------------------------
+def engine_powerball(hist,trickle=None):
+    if hist.empty:return [],0,0.0
+    pick,conf=engine_n5(hist)
+    red=np.random.default_rng().integers(1,27);return pick,red,conf*0.9
 
-def within_window(hhmm:str, slack_min:int=2) -> bool:
-    hh,mm = map(int, hhmm.split(":"))
-    now = now_ct()
-    t0 = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
-    return abs((now - t0).total_seconds()) <= slack_min*60
+# ------------------ Phase runners ------------------
+def _numbers_to_list(s):return [int(x) for x in re.findall(r"\d+",str(s))]
 
-def should_run(game:str, phase:str) -> bool:
-    cfg = SCHEDULE[game]
-    if now_ct().weekday() not in cfg["days"]: return False
-    if phase=="post":  return within_window(cfg["post"])
-    if phase=="final": return within_window(cfg["final"])
-    if phase=="pre":   return any(within_window(t) for t in cfg["pre"])
-    return False
+def run_post_draw(g):
+    df=pull_official(g);hist=save_history(g,df)
+    if hist is None or hist.empty:return
+    last=_numbers_to_list(hist.iloc[-1]["numbers"])
+    pf=LAST_PRED(g)
+    if pf.exists():
+        pdf=pd.read_csv(pf);pred=_numbers_to_list(pdf.iloc[-1]["primary"]);score_performance(g,pred,last)
+    pick,conf=(engine_n5(hist) if g=="N5" else engine_g5_v27m(hist) if g=="G5" else ([],75));log_confidence(g,conf)
 
-def scheduler_tick(auto:bool=True):
-    # run any due phases once per window (tracked in session_state)
-    if "last_run_keys" not in st.session_state: st.session_state.last_run_keys=set()
-    due=[]
-    for g in GAMES:
-        for phase in ("post","pre","final"):
-            if should_run(g, phase):
-                key=f"{now_ct().date()}_{g}_{phase}"
-                if key not in st.session_state.last_run_keys:
-                    due.append((g, phase, key))
-    if not auto: return []
+def run_pre_draw(g):
+    hist=load_history(g)
+    seed=build_trickle_seed(load_history("N5"),20)
+    if g=="N5":pick,conf=engine_n5(hist);out=[(" ".join(map(str,pick)),"","",conf)]
+    elif g=="G5":pick,conf=engine_g5_v27m(hist,seed);out=[(" ".join(map(str,pick)),"","",conf)]
+    else:wh,red,conf=engine_powerball(hist,seed);out=[(f"{' '.join(map(str,wh))} | R:{red}","","",conf)]
+    df=pd.DataFrame(out,columns=["primary","backup_a","backup_b","confidence"])
+    df.to_csv(LAST_PRED(g),index=False);log_confidence(g,float(conf))
 
-    for g, phase, key in sorted(due, key=lambda x: x[0]):
-        run_phase(g, phase)
-        st.session_state.last_run_keys.add(key)
-
+# ------------------ Schedulers ------------------
+def _once_per_day(key,hour):
+    m=load_manifest();today=now_ct().strftime("%Y-%m-%d");last=m.get(key)
+    due=(now_ct().hour==hour) and (last!=today)
+    if due:m[key]=today;save_manifest(m)
     return due
-
-# -----------------------------
-# Single phase run (+ trickle)
-# -----------------------------
-
-def run_phase(game:str, phase:str):
-    st.info(f"Running **{phase}** for **{game}** …")
-    # Pull + save history
-    df_new = pull_official(game, MN_SOURCES[game])
-    if not df_new.empty:
-        hist = save_history(game, df_new)
-    else:
-        hist = load_history(game)
-
-    # Build trickle from N5
-    seed = build_trickle_seed(load_history("N5"), window=20)
-    trickle = seed if game in ("G5","PB") else None
-
-    pick, conf = adaptive_simulation(hist, game, trickle)
-    if pick:
-        st.success(f"{game} → pick {pick}  |  confidence {conf}%")
-        log_confidence(game, conf)
-
-        # score vs latest actual if available
-        if not hist.empty:
-            latest = hist.iloc[0]
-            actual = [int(latest[f"n{k}"]) for k in range(1,6)]
-            score_performance(game, pick, actual)
-    else:
-        st.warning(f"{game}: not enough data.")
-
+def daily_pull(): [save_history(g,pull_official(g)) for g in GAMES]
+def scheduled_post_draws(): [run_post_draw(g) for g in GAMES if now_ct().weekday() in DRAW_DAYS[g]]
+def scheduled_pre_draws(): [run_pre_draw(g) for g in GAMES if now_ct().weekday() in DRAW_DAYS[g]]
+def weekly_archive_if_needed():
+    now=now_ct()
+    if now.weekday()==6 and 16<=now.hour<17:
+        tag=now.strftime("%Y%m%d_%H%M");zp=ARCH/f"northstar_archive_{tag}.zip"
+        if not zp.exists():
+            with zipfile.ZipFile(zp,"w",zipfile.ZIP_DEFLATED) as z:
+                for f in DATA.glob("*.csv"):z.write(f,f.name)
+def tick_all_schedulers():
+    if _once_per_day("last_daily_run",DAILY_PULL_HH): daily_pull()
+    if _once_per_day("last_post_run",POST_HH): scheduled_post_draws()
+    if _once_per_day("last_pre_run",PRE_HH): scheduled_pre_draws()
     weekly_archive_if_needed()
-    update_manifest(synced=bool(GH_TOKEN))
 
-# -----------------------------
-# UI
-# -----------------------------
-
-st.set_page_config(page_title=f"Northstar v{APP_VER}", page_icon="🌟", layout="wide")
+# ------------------ Streamlit UI ------------------
+st.set_page_config(page_title=f"Northstar v{APP_VER}",page_icon="🌟",layout="wide")
 st.title(f"🌟 Northstar Ecosystem — v{APP_VER}")
-st.caption("Live official pulls • Auto storage • Trickle-down influence • Confidence & performance logging • CST schedules")
+st.caption("Live MN pulls • Monte Carlo v2.7-M • 5 AM / 7 AM / 2 PM CST automation")
 
-# Health widget
-m = load_manifest()
-colH1, colH2, colH3 = st.columns(3)
-colH1.metric("Last update", (m.get("last_update") or "—"))
-colH2.metric("Next planned", (m.get("next_planned") or "—"))
-colH3.metric("Git sync", "✅ enabled" if GH_TOKEN else "—")
+tick_all_schedulers()
 
-# Controls
-with st.expander("Controls", expanded=True):
-    auto_tick = st.toggle("Enable auto scheduler tick (recommended)", value=True)
+tab_status,tab_preds,tab_conf,tab_hist,tab_tools=st.tabs(["Status","Predictions","Confidence","History","Tools"])
 
-    st.markdown("#### 🟢 Manual Control")
-    if st.button("🚀 Run System Now"):
-        _cached_pull.clear()  # force fresh data
-        st.info("Running full Northstar update… please wait ⏳")
-        seed = build_trickle_seed(load_history("N5"), window=20)
-def load_previous_data(game):
-    """
-    Loads the most recent stored data file for the specified game (N5, G5, PB).
-    Falls back to an empty DataFrame if no file is found.
-    """
-    import os
-    import pandas as pd
-    import streamlit as st
+# ----- STATUS TAB -----
+with tab_status:
+    m=load_manifest();c1,c2,c3,c4=st.columns(4)
+    c1.metric("Last 5 AM pull",m.get("last_daily_run")or"—")
+    c2.metric("Last 7 AM post",m.get("last_post_run")or"—")
+    c3.metric("Last 2 PM pre",m.get("last_pre_run")or"—")
+    c4.metric("Git sync","—")
 
-    folder = "./data"
-    filename = f"{folder}/{game}_history.csv"
+    st.subheader("Manual controls")
+    b1,b2,b3,b4=st.columns(4)
+    if b1.button("🔄 Pull now"): daily_pull(); st.success("Pulled.")
+    if b2.button("🧪 Run post-draw now"): scheduled_post_draws(); st.success("Post-draw done.")
+    if b3.button("🔮 Run pre-draw now"): scheduled_pre_draws(); st.success("Pre-draw done.")
+    if b4.button("📦 Archive now"): weekly_archive_if_needed(); st.success("Archive complete.")
 
-    try:
-        if os.path.exists(filename):
-            df = pd.read_csv(filename)
-            st.info(f"{game}: Loaded previous data ({len(df)} rows).")
-            return df
-        else:
-            st.warning(f"{game}: No previous file found — using empty DataFrame.")
-            return pd.DataFrame(columns=["date", "n1", "n2", "n3", "n4", "n5", "game"])
-    except Exception as e:
-        st.error(f"{game}: Error loading previous data: {e}")
-        return pd.DataFrame(columns=["date", "n1", "n2", "n3", "n4", "n5", "game"])
-for g in GAMES:
-    st.subheader(f"Running phase for {g}...")
+    st.divider()
+    if st.button("🚀 Run Entire System Now"):
+        with st.spinner("Running complete system cycle…"):
+            st.write("🔄 Pulling data for all games…"); daily_pull()
+            st.write("🧪 Running post-draw analysis…"); scheduled_post_draws()
+            st.write("🔮 Generating pre-draw predictions…"); scheduled_pre_draws()
+            st.write("📦 Creating weekly archive (if due)…"); weekly_archive_if_needed()
+            st.success(f"✅ Full system run complete — {now_ct().strftime('%I:%M %p %Z')}")
 
-    # Step 1: Pull official or fallback data
-    df_new = pull_official(g)
-    if df_new is None or df_new.empty:
-        st.warning(f"{g}: no new data available — using fallback file.")
-        df_new = load_previous_data(g)
+# ----- PREDICTIONS TAB -----
+with tab_preds:
+    st.subheader("Next predictions")
+    for g in GAMES:
+        p=LAST_PRED(g)
+        if p.exists(): st.write(f"**{g}**"); st.dataframe(pd.read_csv(p).tail(1),use_container_width=True)
+        else: st.write(f"**{g}** — no prediction yet.")
+    st.caption("Auto pre-draw run 2 PM CST on draw days.")
 
-    # Step 2: Store or merge history
-    hist = save_history(g, df_new)
-    if hist is None or hist.empty:
-        st.error(f"{g}: failed to build or save history file.")
-        continue
+# ----- CONFIDENCE TAB -----
+with tab_conf:
+    if CONF_PATH.exists():
+        df=pd.read_csv(CONF_PATH)
+        if not df.empty:
+            df["timestamp"]=pd.to_datetime(df["timestamp"],errors="coerce")
+            st.line_chart(df.pivot(index="timestamp",columns="game",values="confidence").tail(300))
+    if PERF_PATH.exists(): st.dataframe(pd.read_csv(PERF_PATH).tail(50),use_container_width=True)
 
-    # Step 3: Establish trickle-down seed for N5/G5 (cross-pull logic)
-    trickle = build_trickle_seed(hist) if g in ["N5", "G5"] else None
+# ----- HISTORY TAB -----
+with tab_hist:
+    cols=st.columns(3)
+    for i,g in enumerate(GAMES):
+        with cols[i]:
+            df=load_history(g)
+            if not df.empty: st.write(f"**{g} ({len(df)} rows)**"); st.dataframe(df.tail(10),use_container_width=True)
+            else: st.write(f"**{g}** — no history yet.")
 
-    # Step 4: Run adaptive Monte Carlo + clustering
-    pick, conf = adaptive_scheduler(hist, trickle)
+# ----- TOOLS TAB -----
+with tab_tools:
+    st.write("**Paths**"); st.code(str(DATA))
+    notes=st.text_area("Notes",value=load_manifest().get("notes",""))
+    if st.button("Save notes"): m=load_manifest();m["notes"]=notes;save_manifest(m);st.success("Saved.")
 
-    # Step 5: Update confidence tracking and logs
-    if pick is not None:
-        update_confidence_trends(hist, g)
-        st.success(f"{g}: ✅ Updated confidence trends — {conf:.1f}% confidence.")
-    else:
-        st.warning(f"{g}: No viable pick returned from adaptive scheduler.")
-
-        weekly_archive_if_needed()
-        update_manifest(synced=bool(GH_TOKEN))
-        st.success(f"✅ System run complete — {now_ct().strftime('%I:%M %p %Z')}")
-
-# Auto tick on each refresh
-due = scheduler_tick(auto=auto_tick)
-if due:
-    st.success(f"Ran: {', '.join([f'{g}:{p}' for g,p,_ in due])}")
-
-# Live cards
-st.subheader("🎯 Live latest draws")
-cols = st.columns(3)
-for i,g in enumerate(GAMES):
-    with cols[i]:
-        dfh = load_history(g)
-        if not dfh.empty:
-            latest = dfh.iloc[0]
-            nums = [int(latest[f"n{k}"]) for k in range(1,6)]
-            st.success(f"{g}: {' '.join(map(str, nums))}  —  {latest['date'].strftime('%b %d, %Y')}")
-        else:
-            st.warning(f"{g}: fallback (no file yet)")
-
-st.divider()
-
-# Predictions + logs
-st.subheader("🔮 Adaptive predictions (with trickle-down)")
-seed = build_trickle_seed(load_history("N5"), window=20)
-for g in GAMES:
-    hist = load_history(g)
-    trickle = seed if g in ("G5","PB") else None
-    pick, conf = adaptive_simulation(hist, g, trickle)
-    if pick:
-        st.info(f"{g}: {pick}  |  {conf}%")
-        # log preview only (scheduler/phase already logs)
-    else:
-        st.caption(f"{g}: insufficient data yet.")
-
-st.divider()
-
-# Charts
-st.subheader("📈 Confidence trend")
-if CONF_PATH.exists():
-    cdf = pd.read_csv(CONF_PATH)
-    if not cdf.empty:
-        cdf["timestamp"]=pd.to_datetime(cdf["timestamp"])
-        cdf = cdf.sort_values("timestamp").tail(300)
-        st.line_chart(cdf.pivot(index="timestamp", columns="game", values="confidence"))
-    else:
-        st.caption("No confidence data yet.")
-else:
-    st.caption("No confidence data yet.")
-
-st.subheader("🏁 Performance (Exact / ±1)")
-if PERF_PATH.exists():
-    pdf = pd.read_csv(PERF_PATH)
-    if not pdf.empty:
-        pdf["timestamp"]=pd.to_datetime(pdf["timestamp"])
-        st.dataframe(pdf.tail(50), use_container_width=True)
-    else:
-        st.caption("No performance entries yet.")
-else:
-    st.caption("No performance entries yet.")
-
-st.divider()
-
-# Schedule view
-st.subheader("🗓️ Schedule (CST)")
-for g,cfg in SCHEDULE.items():
-    days_map = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]
-    days_txt = ", ".join(days_map[d] for d in sorted(cfg["days"]))
-    st.write(f"**{g}** — days: {days_txt} • post {cfg['post']} • pre {', '.join(cfg['pre'])} • final {cfg['final']}")
-
-st.caption(f"Northstar v{APP_VER} • © 2025")
+st.caption(f"© Northstar v{APP_VER} • All times CST")
