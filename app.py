@@ -22,7 +22,51 @@ import pytz
 import requests
 import streamlit as st
 from bs4 import BeautifulSoup
+from pathlib import Path
+import pandas as pd
+import re
+DATA = Path("./data"); DATA.mkdir(exist_ok=True)
 
+def _parse_ints(texts):
+    out=[]
+    for t in texts:
+        out += [int(x) for x in re.findall(r"\d+", t)]
+    return out
+
+def _save_draw(game:str, draw_date:str, nums:list[int]):
+    """
+    Append a draw row into ./data/{game}.csv
+    N5/G5 -> 5 numbers; PB -> 5 white + 1 powerball (pb)
+    De-duplicates on (date, all numbers).
+    """
+    game = game.upper()
+    path = DATA / f"{game}.csv"
+    cols = {
+        "N5": ["date","b1","b2","b3","b4","b5"],
+        "G5": ["date","b1","b2","b3","b4","b5"],
+        "PB": ["date","b1","b2","b3","b4","b5","pb"],   # no “red numbers”, just the PB column
+    }[game]
+
+    # shape the row
+    if game in ("N5","G5"):
+        if len(nums) < 5: return False
+        row = [draw_date] + nums[:5]
+    else:  # PB
+        if len(nums) < 6: return False
+        row = [draw_date] + nums[:5] + [nums[5]]
+
+    # load/create csv
+    if path.exists():
+        df = pd.read_csv(path)
+    else:
+        df = pd.DataFrame(columns=cols)
+
+    # append + dedupe
+    add = pd.DataFrame([row], columns=cols)
+    df = pd.concat([df, add], ignore_index=True)
+    df = df.drop_duplicates(subset=cols).reset_index(drop=True)
+    df.to_csv(path, index=False)
+    return True
 # ------------------ App config / paths ------------------
 APP_VER = "5.7-Unified"
 TZ      = pytz.timezone("America/Chicago")
