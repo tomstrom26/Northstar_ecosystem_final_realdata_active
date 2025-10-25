@@ -627,18 +627,26 @@ with tab5:
 
 st.caption(f"© Northstar — {APP_VER} • All times America/Chicago")
 # ============================================================
-# SCHEDULER / MANUAL RUN
+# 🟢 MANUAL RUN BUTTON — Executes full orchestrator run
 # ============================================================
 
 if st.button("🚀 Run System Now"):
-    _cached_pull.clear()
-    st.info("Running full Northstar update… please wait ⏳")
-    # ... (simulation + trickle code)
-    st.success("✅ System run complete — {}".format(now_ct().strftime("%I:%M %p %Z")))
+    st.info("Running full Northstar update cycle...")
+    
+    # ✅ Clear Streamlit cache safely
+    try:
+        st.cache_data.clear()
+        st.cache_resource.clear()
+        st.info("🔄 Cache cleared.")
+    except Exception as e:
+        st.warning(f"Cache clear skipped: {e}")
 
-# Footer caption (KEEP THIS)
-st.caption("Northstar Ecosystem v3.0 — Automated Prediction System")
-st.divider()
+    # ✅ Run orchestrator safely
+    try:
+        orchestrator_run_all()
+        st.success("✅ System run complete — all phases executed.")
+    except Exception as e:
+        st.error(f"❌ Orchestrator error: {e}")
 # ============================================================
 # 🔁 Northstar Ecosystem Orchestrator (Full Auto Run)
 # ============================================================
