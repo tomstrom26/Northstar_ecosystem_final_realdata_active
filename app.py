@@ -783,6 +783,105 @@ def ensure_first_open_fallback():
         except Exception as e:
             st.error(f"⚠️ Fallback orchestrator failed: {e}")
 # ============================================================
+# 🕓 Northstar Multi-Phase Scheduler (America/Chicago)
+# Runs only for games that are "scheduled" on a given weekday.
+# Phases: 07:00 post, 09:00 pre, 11:00 pre-sim, 13:00 pre-full, 16:00 final
+# ============================================================
+
+import threading, schedule, time, pytz
+from datetime import datetime
+
+TZ = pytz.timezone("America/Chicago")
+
+# ---- Which games are "on" by weekday (0=Mon ... 6=Sun)
+SCHEDULED_DAYS = {
+    "N5": {0,1,2,3,4,5,6},       # daily
+    "G5": {0,2,4},               # Mon, Wed, Fri
+    "PB": {0,2,5},               # Mon, Wed, Sat
+}
+
+# ---- Map phases -> per-game function names (implement in your code)
+# If a function is missing, we show st.info instead of raising.
+PHASE_FUNCS = {
+    "post_07": {
+        "N5": "n5_postdraw",
+        "G5": "g5_postdraw",
+        "PB": "pb_postdraw",
+    },
+    "pre_09": {
+        "N5": "n5_predraw",
+        "G5": "g5_predraw",
+        "PB": "pb_predraw",
+    },
+    "pre_sim_11": {
+        "N5": "n5_predraw_sim_fast",
+        "G5": "g5_predraw_sim_fast",
+        "PB": "pb_predraw_sim_fast",
+    },
+    "pre_full_13": {
+        "N5": "n5_predraw_full",
+        "G5": "g5_predraw_full",
+        "PB": "pb_predraw_full",
+    },
+    "final_16": {
+        "N5": "n5_final_sets",
+        "G5": "g5_final_sets",
+        "PB": "pb_final_sets",
+    },
+}
+
+def _now_str():
+    return datetime.now(TZ).strftime("%Y-%m-%d %H:%M:%S")
+
+def _games_today():
+    wd = datetime.now(TZ).weekday()
+    return [g for g, days in SCHEDULED_DAYS.items() if wd in days]
+
+def _safe_call(func_name: str, game: str, phase_label: str):
+    fn = globals().get(func_name)
+    if callable(fn):
+        try:
+            fn()
+            st.success(f"✅ {phase_label}: {game} completed @ {_now_str()}")
+        except Exception as e:
+            st.error(f"❌ {phase_label}: {game} failed — {e}")
+    else:
+        st.info(f"ℹ️ {phase_label}: {game} skipped — missing handler `{func_name}()`")
+
+def _run_phase(phase_key: str, phase_label: str):
+    games = _games_today()
+    st.info(f"▶️ {phase_label} starting for: {', '.join(games)} @ {_now_str()}")
+    for g in games:
+        func_name = PHASE_FUNCS.get(phase_key, {}).get(g)
+        if func_name:
+            _safe_call(func_name, g, phase_label)
+
+# ---- Phase wrappers bound to schedule times
+def phase_post_07():     _run_phase("post_07",    "07:00 Post-draw analysis")
+def phase_pre_09():      _run_phase("pre_09",     "09:00 Pre-draw analysis")
+def phase_sim_11():      _run_phase("pre_sim_11", "11:00 Pre-draw simulation / fast")
+def phase_full_13():     _run_phase("pre_full_13","13:00 Pre-draw simulation / FULL")
+def phase_final_16():    _run_phase("final_16",   "16:00 Final draw & set selection")
+
+# ---- Register times (local America/Chicago wall clock)
+schedule.every().day.at("07:00").do(phase_post_07)
+schedule.every().day.at("09:00").do(phase_pre_09)
+schedule.every().day.at("11:00").do(phase_sim_11)
+schedule.every().day.at("13:00").do(phase_full_13)
+schedule.every().day.at("16:00").do(phase_final_16)
+
+# ---- Background loop
+def _scheduler_loop():
+    while True:
+        schedule.run_pending()
+        time.sleep(30)
+
+if "scheduler_thread_v2" not in st.session_state:
+    t = threading.Thread(target=_scheduler_loop, daemon=True)
+    t.start()
+    st.session_state["scheduler_thread_v2"] = t
+    st.success("🕓 Multi-phase scheduler active (07,09,11,13,16 CST).")
+# ============================================================
 # 🧩 DIAGNOSTICS TAB — FINAL VERSION
 # ============================================================
 
