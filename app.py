@@ -141,222 +141,115 @@ def fetch_json(url):
     except Exception as e:
         return None
 
-# --------------------------------------------------------------------
-# Pull official MN data (GitHub → proxy → local fallback)
-# --------------------------------------------------------------------
+# ==========================================================
+# Pull official MN Lottery data (Live MN Site → GitHub → Proxy → Local)
+# ==========================================================
 def pull_official(game):
     """
-    Pulls MN Lottery results from GitHub or proxy,
-    then normalizes and persists to ./data/ for offline use.
+    Unified data retriever for Minnesota Lottery draws.
+    1️⃣ Pulls directly from MN Lottery site (preferred)
+    2️⃣ Falls back to GitHub mirror
+    3️⃣ Falls back to proxy relay
+    4️⃣ Uses local /data/{game}.csv if all else fails
     """
 
+    import os
+    import pandas as pd
+    import streamlit as st
+    import requests
+    from bs4 import BeautifulSoup
+    from datetime import datetime
+
+    # -------------------------------
+    # Define all sources
+    # -------------------------------
+    mnlottery_urls = {
+        "N5": "https://www.mnlottery.com/games/draw-games/northstar-cash",
+        "G5": "https://www.mnlottery.com/games/draw-games/gopher-5",
+        "PB": "https://www.mnlottery.com/games/draw-games/powerball"
+    }
+
     github_urls = {
-        "N5": "https://raw.githubusercontent.com/yourusername/yourrepo/main/data/n5.json",
-        "G5": "https://raw.githubusercontent.com/yourusername/yourrepo/main/data/g5.json",
-        "PB": "https://raw.githubusercontent.com/yourusername/yourrepo/main/data/pb.json"
+        "N5": "https://raw.githubusercontent.com/tomstrom26/northstar_ecosystem_final_realdata_active/main/data/n5.json",
+        "G5": "https://raw.githubusercontent.com/tomstrom26/northstar_ecosystem_final_realdata_active/main/data/g5.json",
+        "PB": "https://raw.githubusercontent.com/tomstrom26/northstar_ecosystem_final_realdata_active/main/data/pb.json"
     }
 
     proxy_urls = {
-        "N5": "https://r.jina.ai/https://raw.githubusercontent.com/yourusername/yourrepo/main/data/n5.json",
-        "G5": "https://r.jina.ai/https://raw.githubusercontent.com/yourusername/yourrepo/main/data/g5.json",
-        "PB": "https://r.jina.ai/https://raw.githubusercontent.com/yourusername/yourrepo/main/data/pb.json"
+        "N5": "https://r.jina.ai/https://raw.githubusercontent.com/tomstrom26/northstar_ecosystem_final_realdata_active/main/data/n5.json",
+        "G5": "https://r.jina.ai/https://raw.githubusercontent.com/tomstrom26/northstar_ecosystem_final_realdata_active/main/data/g5.json",
+        "PB": "https://r.jina.ai/https://raw.githubusercontent.com/tomstrom26/northstar_ecosystem_final_realdata_active/main/data/pb.json"
     }
 
     folder = "./data"
     os.makedirs(folder, exist_ok=True)
     filename = os.path.join(folder, f"{game.lower()}.csv")
 
-    # Step 1 — Try GitHub
-    data = fetch_json(github_urls.get(game, ""))
-    if data is None:
-        st.info(f"{game}: Retrying via proxy...")
-        data = fetch_json(proxy_urls.get(game, ""))
-
-    # Step 2 — Normalize JSON data
-    if isinstance(data, list):
-        data = {"draws": data}
-
-    # Step 3 — If all online sources fail, use cached/local CSV
-    if data is None or not data.get("draws"):
-        st.error(f"{game}: ❌ All remote sources failed.")
-        if os.path.exists(filename):
-            st.warning(f"{game}: Using cached local file.")
-            try:
-                df = pd.read_csv(filename)
-                st.info(f"{game}: Loaded local file with {len(df)} rows.")
-                return df
-            except Exception as e:
-                st.error(f"{game}: Failed to read cached file — {e}")
-                return pd.DataFrame()
-        else:
-            st.error(f"{game}: No local file found — cannot continue.")
-            return pd.DataFrame()
-
-    # Step 4 — Save and return normalized data
-    df = normalize_and_save_draws(game, data, filename)
-    if df is not None and not df.empty:
-        st.success(f"{game}: ✅ Pulled and saved {len(df)} draws.")
-        return df
-    else:
-        st.warning(f"{game}: no new data available — using fallback file.")
-        if os.path.exists(filename):
-            try:
-                df = pd.read_csv(filename)
-                st.info(f"{game}: Loaded previous data ({len(df)} rows).")
-                return df
-            except Exception as e:
-                st.error(f"{game}: Failed to load fallback file — {e}")
-        return pd.DataFrame()
-# --------------------------------------------------------------------
-# Normalize + Save Draws Function
-# --------------------------------------------------------------------
-def normalize_and_save_draws(game, data, filename):
-    """
-    Converts JSON data into a normalized DataFrame,
-    merges with any existing CSV, and saves the result.
-    """
-
+    # -------------------------------
+    # 1️⃣ Try live MN Lottery pull
+    # -------------------------------
     try:
-        # Ensure structure
-        items = data.get("draws", data if isinstance(data, list) else [])
-        draw_rows = []
+        url = mnlottery_urls[game]
+        html = requests.get(url, timeout=15).text
+        soup = BeautifulSoup(html, "html.parser")
 
-        for draw in items:
-            draw_date = draw.get("draw_date") or draw.get("date")
-            numbers = draw.get("numbers") or draw.get("drawn_numbers")
+        numbers = [n.get_text(strip=True) for n in soup.select("li.draw-result-number")]
+        draw_date = soup.select_one(".draw-date")
+        draw_date = draw_date.get_text(strip=True) if draw_date else datetime.now().strftime("%Y-%m-%d")
 
-            if draw_date and numbers:
-                if isinstance(numbers, list):
-                    numbers = ",".join(map(str, numbers))
-                draw_rows.append({
-                    "date": draw_date,
-                    "numbers": numbers
-                })
+        if numbers:
+            st.success(f"{game}: 🎯 Pulled live from MN Lottery — {draw_date}: {numbers}")
 
-        # If no valid draws found
-        if not draw_rows:
-            st.warning(f"{game}: No valid draw rows found in data.")
-            return None
-
-        # Build DataFrame
-        df_new = pd.DataFrame(draw_rows)
-        df_new["game"] = game
-
-        # Ensure /data folder exists
-        os.makedirs(os.path.dirname(filename), exist_ok=True)
-
-        # Merge with any existing data
-        if os.path.exists(filename):
-            try:
-                old_df = pd.read_csv(filename)
-                merged = pd.concat([old_df, df_new]).drop_duplicates().reset_index(drop=True)
-            except Exception:
-                merged = df_new
+            # Save to CSV (append + dedupe)
+            df_live = pd.DataFrame([{"date": draw_date, "numbers": ",".join(numbers), "game": game}])
+            if os.path.exists(filename):
+                old = pd.read_csv(filename)
+                df_live = pd.concat([old, df_live]).drop_duplicates(subset=["date"], keep="last")
+            df_live.to_csv(filename, index=False)
+            return df_live
         else:
-            merged = df_new
-
-        # Save merged data
-        merged.to_csv(filename, index=False)
-        st.success(f"{game}: ✅ Saved {len(merged)} total rows to {filename}")
-        return merged
-
+            st.warning(f"{game}: MN Lottery site reachable, but no numbers found.")
     except Exception as e:
-        st.error(f"{game}: Failed to normalize or save — {e}")
-        return None
-        
-        df_new = pd.DataFrame(draw_rows)
-        df_new["game"] = game
+        st.info(f"{game}: MN Lottery live fetch failed — {e}")
 
-        # Ensure /data directory exists before saving
-        os.makedirs(os.path.dirname(filename), exist_ok=True)
-
-        # Merge with any previous file
-        if os.path.exists(filename):
-            old_df = pd.read_csv(filename)
-            merged = pd.concat([old_df, df_new]).drop_duplicates(subset=["date"], keep="last")
-        else:
-            merged = df_new
-
-        merged.to_csv(filename, index=False)
-        st.success(f"{game}: ✅ Pulled & saved {len(df_new)} draws successfully.")
-        return merged
-
+    # -------------------------------
+    # 2️⃣ Try GitHub JSON source
+    # -------------------------------
+    try:
+        data = fetch_json(github_urls[game])
+        if data:
+            st.info(f"{game}: Pulled via GitHub JSON.")
+            return normalize_and_save_draws(game, data, filename)
     except Exception as e:
-        st.error(f"{game}: Failed to build or save history file. {e}")
-        return None
-    
-# -----------------------------
-# Persistence: histories / logs
-# -----------------------------
+        st.warning(f"{game}: GitHub source failed — {e}")
 
-def save_history(game:str, df_new:pd.DataFrame) -> pd.DataFrame:
-    p = HIST_PATH(game)
-    if p.exists():
-        old = pd.read_csv(p)
-        old["date"] = pd.to_datetime(old["date"], errors="coerce")
-    else:
-        old = pd.DataFrame(columns=["date","n1","n2","n3","n4","n5","game"])
-    merged = pd.concat([old, df_new], ignore_index=True)
-    merged["date"] = pd.to_datetime(merged["date"], errors="coerce")
-    merged = merged.dropna(subset=["date"])
-    merged = merged.drop_duplicates(subset=["date","n1","n2","n3","n4","n5"]).sort_values("date", ascending=False)
-    merged.to_csv(p, index=False)
-    # Optional: push to GitHub
-    if GH_TOKEN:
-        gh_write_text(f"data/{p.name}", merged.to_csv(index=False), f"Update {game} history")
-    return merged
+    # -------------------------------
+    # 3️⃣ Try Proxy relay
+    # -------------------------------
+    try:
+        data = fetch_json(proxy_urls[game])
+        if data:
+            st.info(f"{game}: Pulled via proxy fallback.")
+            return normalize_and_save_draws(game, data, filename)
+    except Exception as e:
+        st.warning(f"{game}: Proxy fetch failed — {e}")
 
-def load_history(game:str) -> pd.DataFrame:
-    p = HIST_PATH(game)
-    if p.exists():
-        df = pd.read_csv(p)
-        df["date"]=pd.to_datetime(df["date"], errors="coerce")
-        return df.dropna(subset=["date"]).sort_values("date", ascending=False).reset_index(drop=True)
-    return pd.DataFrame(columns=["date","n1","n2","n3","n4","n5","game"])
+    # -------------------------------
+    # 4️⃣ Local offline fallback
+    # -------------------------------
+    if os.path.exists(filename):
+        try:
+            df_local = pd.read_csv(filename)
+            st.warning(f"{game}: Using local cached file ({len(df_local)} rows).")
+            return df_local
+        except Exception as e:
+            st.error(f"{game}: Local fallback failed — {e}")
 
-def log_confidence(game:str, conf:float):
-    row = pd.DataFrame([[now_ct(), game, conf]], columns=["timestamp","game","confidence"])
-    if CONF_PATH.exists():
-        old = pd.read_csv(CONF_PATH)
-        df = pd.concat([old, row], ignore_index=True)
-        if len(df) > 500: df = df.tail(500)
-    else:
-        df = row
-    df.to_csv(CONF_PATH, index=False)
-    if GH_TOKEN:
-        gh_write_text("data/confidence_trends.csv", df.to_csv(index=False), "Update confidence_trends")
-
-def score_performance(game:str, predicted:List[int], actual:List[int]):
-    aset = set(actual)
-    exact = len(set(predicted) & aset)
-    pm1 = sum(1 for p in predicted if any(abs(p-a)==1 for a in aset))
-    row = pd.DataFrame([[now_ct(), game, exact, pm1]], columns=["timestamp","game","exact","plusminus1"])
-    if PERF_PATH.exists():
-        old = pd.read_csv(PERF_PATH)
-        df = pd.concat([old, row], ignore_index=True)
-        if len(df) > 2000: df = df.tail(2000)
-    else:
-        df = row
-    df.to_csv(PERF_PATH, index=False)
-    if GH_TOKEN:
-        gh_write_text("data/performance_log.csv", df.to_csv(index=False), "Update performance_log")
-
-# -----------------------------
-# Weekly archive + manifest
-# -----------------------------
-
-def weekly_archive_if_needed():
-    # Make a zip each Sunday ~16:00 CST
-    now = now_ct()
-    if now.weekday()==6 and 16 <= now.hour < 17:  # Sunday hour window
-        tag = now.strftime("%Y%m%d_%H%M")
-        zpath = ARCH / f"northstar_archive_{tag}.zip"
-        if not zpath.exists():
-            with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED) as z:
-                for f in DATA.glob("*.csv"):
-                    z.write(f, f.name)
-            if GH_TOKEN:
-                gh_write_text(f"data/archives/{zpath.name}", zpath.read_bytes().decode("latin1"), "Archive zip")  # store as bytes? (optional)
+    # -------------------------------
+    # 5️⃣ Ultimate fallback (empty)
+    # -------------------------------
+    st.error(f"{game}: ❌ No valid data sources available.")
+    return pd.DataFrame(columns=["date", "numbers", "game"])
 
 def update_manifest(synced=False):
     m = load_manifest()
@@ -366,6 +259,101 @@ def update_manifest(synced=False):
     save_manifest(m)
     if GH_TOKEN:
         gh_write_text("data/manifest.json", json.dumps(m, indent=2), "Update manifest")
+
+# ==========================================================
+# Persistence: histories / logs
+# ==========================================================
+
+def save_history(game: str, df_new: pd.DataFrame):
+    """Save draw data to a persistent history file."""
+    p = HIST_PATH(game)
+    try:
+        if p.exists():
+            old = pd.read_csv(p)
+            old["date"] = pd.to_datetime(old["date"], errors="coerce")
+        else:
+            old = pd.DataFrame(columns=["date", "numbers", "game"])
+
+        merged = pd.concat([old, df_new], ignore_index=True)
+        merged["date"] = pd.to_datetime(merged["date"], errors="coerce")
+        merged = merged.dropna(subset=["date"]).drop_duplicates(subset=["date"], keep="last")
+        merged.to_csv(p, index=False)
+
+        if GH_TOKEN:
+            gh_write_text(f"data/{p.name}", merged.to_csv(index=False))
+        st.success(f"{game}: 📦 History updated ({len(merged)} records).")
+        return merged
+    except Exception as e:
+        st.error(f"{game}: Failed to save history — {e}")
+        return None
+
+
+def load_history(game: str) -> pd.DataFrame:
+    """Load existing game history from disk."""
+    p = HIST_PATH(game)
+    if p.exists():
+        df = pd.read_csv(p)
+        df["date"] = pd.to_datetime(df["date"], errors="coerce")
+        return df.dropna(subset=["date"])
+    return pd.DataFrame(columns=["date", "numbers", "game"])
+
+
+def log_confidence(game: str, conf: float):
+    """Append confidence log entry."""
+    row = pd.DataFrame([[now_ct(), game, conf]], columns=["timestamp", "game", "confidence"])
+    try:
+        if CONF_PATH.exists():
+            old = pd.read_csv(CONF_PATH)
+            df = pd.concat([old, row], ignore_index=True)
+            if len(df) > 500:
+                df = df.tail(500)
+        else:
+            df = row
+        df.to_csv(CONF_PATH, index=False)
+
+        if GH_TOKEN:
+            gh_write_text("data/confidence_trends.csv", df.to_csv(index=False))
+    except Exception as e:
+        st.error(f"{game}: Confidence logging failed — {e}")
+
+
+def score_performance(game: str, predicted: list[int], actual: list[int]):
+    """Compare predicted vs actual and record accuracy."""
+    aset = set(actual)
+    exact = len(set(predicted) & aset)
+    pm1 = sum(1 for p in predicted if any(abs(p - a) == 1 for a in aset))
+    row = pd.DataFrame([[now_ct(), game, exact, pm1]],
+                       columns=["timestamp", "game", "exact", "plusminus1"])
+    try:
+        if PERF_PATH.exists():
+            old = pd.read_csv(PERF_PATH)
+            df = pd.concat([old, row], ignore_index=True)
+            if len(df) > 2000:
+                df = df.tail(2000)
+        else:
+            df = row
+        df.to_csv(PERF_PATH, index=False)
+
+        if GH_TOKEN:
+            gh_write_text("data/performance_log.csv", df.to_csv(index=False))
+    except Exception as e:
+        st.error(f"{game}: Performance logging failed — {e}")
+
+
+def weekly_archive_if_needed():
+    """Auto-create a weekly ZIP backup every Sunday ~16:00 CST."""
+    now = now_ct()
+    if now.weekday() == 6 and 16 <= now.hour < 17:
+        tag = now.strftime("%Y%m%d_%H%M")
+        zpath = ARCH / f"northstar_archive_{tag}.zip"
+        if not zpath.exists():
+            import zipfile
+            with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED) as zf:
+                for f in DATA.glob("*.csv"):
+                    zf.write(f, arcname=f.name)
+            st.info(f"📦 Created weekly archive: {zpath.name}")
+
+    return pd.DataFrame(columns=["date", "numbers", "game"])
 
 # -----------------------------
 # Trickle-down seed
